@@ -6,7 +6,7 @@ You are an autonomous coding agent implementing tasks from Beads.
 
 1. Read the bead details from `bead_id` (provided below)
 2. Read the progress log at `scripts/ralph/progress.txt` (check Codebase Patterns section first)
-3. Check you're on a branch named `ralph/bead-[bead-id]` (create if needed)
+3. Verify you're on the correct branch (do NOT create new branches - stay on current branch)
 4. Implement the bead's requirements
 5. Run quality checks (`pnpm typecheck`, `pnpm lint`)
 6. Update relevant `AGENTS.md` files if you discover reusable patterns

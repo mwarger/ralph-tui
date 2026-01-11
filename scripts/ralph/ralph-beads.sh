@@ -343,11 +343,10 @@ for i in $(seq 1 $MAX_ITERATIONS); do
 - **Description**: $BEAD_DESCRIPTION
 
 ## Instructions
-1. Create branch: ralph/bead-$BEAD_ID
-2. Implement the requirements
-3. Run: pnpm typecheck && pnpm lint
-4. Commit: feat: $BEAD_ID - $BEAD_TITLE
-5. Close the bead when done (bd update $BEAD_ID --status=closed --close_reason="...")
+1. Implement the requirements (stay on current branch)
+2. Run: pnpm typecheck && pnpm lint
+3. Commit: feat: $BEAD_ID - $BEAD_TITLE
+4. Close the bead when done (bd update $BEAD_ID --status=closed --close_reason="...")
 EOF
     
     # Create prompt with bead ID injected
