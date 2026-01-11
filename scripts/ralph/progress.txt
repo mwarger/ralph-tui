@@ -1056,3 +1056,27 @@ Started: Sun 11 Jan 10:55:32 GMT 2026
   - 2-space indentation provides clear hierarchy without consuming too much horizontal space
   - Dim color for indent spaces keeps focus on status indicator and task content
 ---
+
+## 2026-01-11 - ralph-tui-45r.45
+- What was implemented:
+  - FEAT: TUI should not auto-start engine - wait for user to select and start
+  - Added 'ready' status to RalphStatus type for interactive waiting state
+  - Added ◉ indicator for ready state (blue info color)
+  - TUI now launches in 'ready' state instead of immediately starting engine
+  - User presses Enter or 's' to start execution
+  - Updated Header and ProgressDashboard to display "Ready" status
+  - Added keyboard shortcut hints: "Enter/s" in footer and help overlay
+  - runWithTui passes initialTasks for pre-start display
+  - Headless mode (--no-tui) still auto-starts for CI/automation use cases
+- Files changed:
+  - src/tui/theme.ts (updated) - Added 'ready' to RalphStatus, statusIndicators, keyboardShortcuts
+  - src/tui/components/Header.tsx (updated) - Added 'ready' case to getStatusDisplay()
+  - src/tui/components/ProgressDashboard.tsx (updated) - Added 'ready' case with "Press Enter or s to start" hint
+  - src/tui/components/RunApp.tsx (updated) - Added initialTasks/onStart props, 's' key handler, Enter handling
+  - src/commands/run.tsx (updated) - RunAppWrapper passes new props, runWithTui waits for onStart callback
+- **Learnings:**
+  - Callback pattern (onStart) decouples TUI from engine lifecycle - TUI triggers start, not vice versa
+  - Initial state can be passed via props while runtime updates come via engine events
+  - Supporting both Enter and 's' keys improves discoverability - some users expect Enter, others look for letter keys
+  - Headless mode as a separate code path keeps CI automation working while TUI becomes interactive
+---
