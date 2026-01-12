@@ -25,7 +25,7 @@ import { EpicLoaderOverlay } from './EpicLoaderOverlay.js';
 import type { EpicLoaderMode } from './EpicLoaderOverlay.js';
 import type { ExecutionEngine, EngineEvent, IterationResult } from '../../engine/index.js';
 import type { TrackerTask } from '../../plugins/trackers/types.js';
-import type { StoredConfig } from '../../config/types.js';
+import type { StoredConfig, SubagentDetailLevel } from '../../config/types.js';
 import type { AgentPluginMeta } from '../../plugins/agents/types.js';
 import type { TrackerPluginMeta } from '../../plugins/trackers/types.js';
 import { getIterationLogsByTask } from '../../logs/index.js';
@@ -272,6 +272,10 @@ export function RunApp({
   const epicLoaderMode: EpicLoaderMode = trackerType === 'json' ? 'file-prompt' : 'list';
   // Details panel view mode (details or output) - default to details
   const [detailsViewMode, setDetailsViewMode] = useState<DetailsViewMode>('details');
+  // Subagent tracing detail level - initialized from config, can be cycled with 't' key
+  const [subagentDetailLevel, setSubagentDetailLevel] = useState<SubagentDetailLevel>(
+    () => storedConfig?.subagentTracingDetail ?? 'off'
+  );
 
   // Filter and sort tasks for display
   // Sort order: active → actionable → blocked → done → closed
@@ -643,6 +647,24 @@ export function RunApp({
           setDetailsViewMode((prev) => (prev === 'details' ? 'output' : 'details'));
           break;
 
+        case 't':
+          // Cycle through subagent detail levels: off → minimal → moderate → full → off
+          setSubagentDetailLevel((prev) => {
+            const levels: SubagentDetailLevel[] = ['off', 'minimal', 'moderate', 'full'];
+            const currentIdx = levels.indexOf(prev);
+            const nextIdx = (currentIdx + 1) % levels.length;
+            const nextLevel = levels[nextIdx]!;
+            // Persist the change if onSaveSettings is available
+            if (storedConfig && onSaveSettings) {
+              const newConfig = { ...storedConfig, subagentTracingDetail: nextLevel };
+              onSaveSettings(newConfig).catch(() => {
+                // Ignore save errors for quick toggle - setting is still in-memory
+              });
+            }
+            return nextLevel;
+          });
+          break;
+
         case 'return':
         case 'enter':
           // Enter drills into details (does NOT start execution - use 's' for that)
@@ -665,7 +687,7 @@ export function RunApp({
           break;
       }
     },
-    [displayedTasks, selectedIndex, status, engine, onQuit, onTaskDrillDown, viewMode, iterations, iterationSelectedIndex, iterationHistoryLength, onIterationDrillDown, showInterruptDialog, onInterruptConfirm, onInterruptCancel, showHelp, showSettings, showEpicLoader, onStart, storedConfig, onSaveSettings, onLoadEpics]
+    [displayedTasks, selectedIndex, status, engine, onQuit, onTaskDrillDown, viewMode, iterations, iterationSelectedIndex, iterationHistoryLength, onIterationDrillDown, showInterruptDialog, onInterruptConfirm, onInterruptCancel, showHelp, showSettings, showEpicLoader, onStart, storedConfig, onSaveSettings, onLoadEpics, subagentDetailLevel]
   );
 
   useKeyboard(handleKeyboard);
@@ -853,6 +875,7 @@ export function RunApp({
               iterationOutput={selectedTaskIteration.output}
               viewMode={detailsViewMode}
               iterationTiming={selectedTaskIteration.timing}
+              subagentDetailLevel={subagentDetailLevel}
             />
           </>
         ) : (
@@ -870,6 +893,7 @@ export function RunApp({
               iterationOutput={selectedTaskIteration.output}
               viewMode={detailsViewMode}
               iterationTiming={selectedTaskIteration.timing}
+              subagentDetailLevel={subagentDetailLevel}
             />
           </>
         )}

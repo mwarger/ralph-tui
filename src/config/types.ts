@@ -8,6 +8,15 @@ import type { TrackerPluginConfig } from '../plugins/trackers/types.js';
 import type { ErrorHandlingConfig, ErrorHandlingStrategy } from '../engine/types.js';
 
 /**
+ * Subagent tracing detail level controls how much subagent information is displayed.
+ * - 'off': No tracing, use raw output (current default behavior)
+ * - 'minimal': Show start/complete events only
+ * - 'moderate': Show events + description + duration
+ * - 'full': Show events + nested output + hierarchy panel
+ */
+export type SubagentDetailLevel = 'off' | 'minimal' | 'moderate' | 'full';
+
+/**
  * Runtime options that can be passed via CLI flags
  */
 export interface RuntimeOptions {
@@ -102,6 +111,9 @@ export interface StoredConfig {
 
   /** Custom prompt template path (relative to cwd or absolute) */
   prompt_template?: string;
+
+  /** Subagent tracing detail level for controlling display verbosity */
+  subagentTracingDetail?: SubagentDetailLevel;
 }
 
 /**

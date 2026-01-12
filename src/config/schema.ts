@@ -6,6 +6,11 @@
 import { z } from 'zod';
 
 /**
+ * Subagent tracing detail level schema
+ */
+export const SubagentDetailLevelSchema = z.enum(['off', 'minimal', 'moderate', 'full']);
+
+/**
  * Error handling strategy schema
  */
 export const ErrorHandlingStrategySchema = z.enum(['retry', 'skip', 'abort']);
@@ -87,6 +92,9 @@ export const StoredConfigSchema = z
 
     // Custom prompt template path
     prompt_template: z.string().optional(),
+
+    // Subagent tracing detail level
+    subagentTracingDetail: SubagentDetailLevelSchema.optional(),
   })
   .strict();
 

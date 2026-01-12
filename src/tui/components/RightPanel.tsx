@@ -309,7 +309,14 @@ export function RightPanel({
   iterationOutput,
   viewMode = 'details',
   iterationTiming,
+  subagentDetailLevel = 'off',
 }: RightPanelProps): ReactNode {
+  // Note: subagentDetailLevel is available for future subagent display implementation
+  // - 'off': No tracing, show raw output only (current behavior)
+  // - 'minimal': Show start/complete events only
+  // - 'moderate': Show events + description + duration
+  // - 'full': Show events + nested output + hierarchy panel
+  void subagentDetailLevel; // Suppress unused variable warning until subagent UI is implemented
   // Build title with view mode indicator
   const modeIndicator = viewMode === 'details' ? '[Details]' : '[Output]';
   const title = `Details ${modeIndicator}`;

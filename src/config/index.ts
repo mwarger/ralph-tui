@@ -13,6 +13,7 @@ import type {
   RalphConfig,
   RuntimeOptions,
   ConfigValidationResult,
+  SubagentDetailLevel,
 } from './types.js';
 import { DEFAULT_CONFIG, DEFAULT_ERROR_HANDLING } from './types.js';
 import type { ErrorHandlingConfig } from '../engine/types.js';
@@ -541,7 +542,7 @@ export async function validateConfig(
 }
 
 // Re-export types
-export type { StoredConfig, RalphConfig, RuntimeOptions, ConfigValidationResult };
+export type { StoredConfig, RalphConfig, RuntimeOptions, ConfigValidationResult, SubagentDetailLevel };
 export { DEFAULT_CONFIG };
 
 // Export schema utilities
@@ -552,6 +553,7 @@ export {
   AgentPluginConfigSchema,
   TrackerPluginConfigSchema,
   ErrorHandlingConfigSchema,
+  SubagentDetailLevelSchema,
 } from './schema.js';
 export type {
   ConfigParseResult,

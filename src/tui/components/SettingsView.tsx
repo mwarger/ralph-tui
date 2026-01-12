@@ -8,7 +8,7 @@ import type { ReactNode } from 'react';
 import { useState, useCallback, useEffect } from 'react';
 import { useKeyboard } from '@opentui/react';
 import { colors } from '../theme.js';
-import type { StoredConfig } from '../../config/types.js';
+import type { StoredConfig, SubagentDetailLevel } from '../../config/types.js';
 import type { AgentPluginMeta } from '../../plugins/agents/types.js';
 import type { TrackerPluginMeta } from '../../plugins/trackers/types.js';
 
@@ -124,6 +124,19 @@ function buildSettingDefinitions(
       setValue: (config, value) => ({
         ...config,
         autoCommit: value as boolean,
+      }),
+      requiresRestart: false,
+    },
+    {
+      key: 'subagentTracingDetail',
+      label: 'Subagent Detail',
+      type: 'select',
+      description: 'Detail level for subagent tracing display (cycle with "t")',
+      options: ['off', 'minimal', 'moderate', 'full'],
+      getValue: (config) => config.subagentTracingDetail ?? 'off',
+      setValue: (config, value) => ({
+        ...config,
+        subagentTracingDetail: value as SubagentDetailLevel,
       }),
       requiresRestart: false,
     },

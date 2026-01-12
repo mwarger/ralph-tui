@@ -6,9 +6,11 @@
 import type { TaskStatus, RalphStatus } from './theme.js';
 import type { IterationResult } from '../engine/types.js';
 import type { TaskPriority } from '../plugins/trackers/types.js';
+import type { SubagentDetailLevel } from '../config/types.js';
 
-// Re-export TaskPriority for convenience
+// Re-export types for convenience
 export type { TaskPriority };
+export type { SubagentDetailLevel };
 
 /**
  * Blocker task info for display purposes
@@ -138,6 +140,15 @@ export interface RightPanelProps {
   onToggleViewMode?: () => void;
   /** Timing information for the iteration (optional) */
   iterationTiming?: IterationTimingInfo;
+  /**
+   * Subagent tracing detail level (for future subagent display).
+   * Controls how much subagent information is shown:
+   * - 'off': No tracing, use raw output
+   * - 'minimal': Show start/complete events only
+   * - 'moderate': Show events + description + duration
+   * - 'full': Show events + nested output + hierarchy panel
+   */
+  subagentDetailLevel?: SubagentDetailLevel;
 }
 
 /**
