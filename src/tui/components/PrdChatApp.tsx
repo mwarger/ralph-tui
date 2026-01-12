@@ -20,6 +20,18 @@ import { colors } from '../theme.js';
 /**
  * Props for the PrdChatApp component
  */
+/**
+ * Result of PRD creation including tracker selection
+ */
+export interface PrdCreationResult {
+  /** Path to the generated PRD markdown file */
+  prdPath: string;
+  /** Name of the feature */
+  featureName: string;
+  /** Tracker format selected (if any) */
+  selectedTracker?: 'json' | 'beads' | null;
+}
+
 export interface PrdChatAppProps {
   /** Agent plugin to use for generating responses */
   agent: AgentPlugin;
@@ -34,7 +46,7 @@ export interface PrdChatAppProps {
   timeout?: number;
 
   /** Callback when PRD is successfully generated */
-  onComplete: (prdPath: string, featureName: string) => void;
+  onComplete: (result: PrdCreationResult) => void;
 
   /** Callback when user cancels */
   onCancel: () => void;
@@ -157,6 +169,9 @@ export function PrdChatApp({
   // Quit confirmation dialog state
   const [showQuitConfirm, setShowQuitConfirm] = useState(false);
 
+  // Track which tracker format was selected for tasks
+  const [selectedTrackerFormat, setSelectedTrackerFormat] = useState<'json' | 'beads' | null>(null);
+
   // Refs
   const engineRef = useRef<ChatEngine | null>(null);
   const isMountedRef = useRef(true);
@@ -261,6 +276,10 @@ Press a number key to select, or continue chatting.`,
   const handleTrackerSelect = useCallback(
     async (option: TrackerOption) => {
       if (!engineRef.current || !prdPath || isLoading) return;
+
+      // Record which tracker format was selected
+      const format = option.key === '1' ? 'json' : 'beads';
+      setSelectedTrackerFormat(format as 'json' | 'beads');
 
       setIsLoading(true);
       setStreamingChunk('');
@@ -416,7 +435,7 @@ Read the PRD and create the appropriate tasks.`;
         if (keyNum === '3') {
           // Done - complete and exit
           if (prdPath && featureName) {
-            onComplete(prdPath, featureName);
+            onComplete({ prdPath, featureName, selectedTracker: selectedTrackerFormat });
           }
           return;
         }
@@ -426,7 +445,7 @@ Read the PRD and create the appropriate tasks.`;
         case 'escape':
           if (phase === 'review' && prdPath && featureName) {
             // In review phase, escape completes (PRD already saved)
-            onComplete(prdPath, featureName);
+            onComplete({ prdPath, featureName, selectedTracker: selectedTrackerFormat });
           } else {
             // In chat phase, show confirmation dialog
             setShowQuitConfirm(true);
@@ -457,7 +476,7 @@ Read the PRD and create the appropriate tasks.`;
           break;
       }
     },
-    [showQuitConfirm, isLoading, phase, trackerOptions, handleTrackerSelect, prdPath, featureName, onComplete, onCancel, sendMessage]
+    [showQuitConfirm, isLoading, phase, trackerOptions, handleTrackerSelect, prdPath, featureName, selectedTrackerFormat, onComplete, onCancel, sendMessage]
   );
 
   useKeyboard(handleKeyboard);

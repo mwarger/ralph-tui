@@ -7,10 +7,12 @@
 import { createCliRenderer } from '@opentui/core';
 import { createRoot } from '@opentui/react';
 import { PrdChatApp } from '../tui/components/PrdChatApp.js';
+import type { PrdCreationResult } from '../tui/components/PrdChatApp.js';
 import { loadStoredConfig, requireSetup } from '../config/index.js';
 import { getAgentRegistry } from '../plugins/agents/registry.js';
 import { registerBuiltinAgents } from '../plugins/agents/builtin/index.js';
 import type { AgentPlugin, AgentPluginConfig } from '../plugins/agents/types.js';
+import { executeRunCommand } from './run.js';
 
 /**
  * Command-line arguments for the create-prd command.
@@ -153,8 +155,9 @@ async function getAgent(agentName?: string): Promise<AgentPlugin | null> {
 
 /**
  * Run the AI-powered chat mode for PRD creation.
+ * Returns the creation result if successful, or null if cancelled.
  */
-async function runChatMode(parsedArgs: CreatePrdArgs): Promise<void> {
+async function runChatMode(parsedArgs: CreatePrdArgs): Promise<PrdCreationResult | null> {
   // Get agent
   const agent = await getAgent(parsedArgs.agent);
   if (!agent) {
@@ -179,13 +182,13 @@ async function runChatMode(parsedArgs: CreatePrdArgs): Promise<void> {
 
   const root = createRoot(renderer);
 
-  await new Promise<void>((resolve) => {
-    const handleComplete = (prdPath: string, _featureName: string) => {
+  return new Promise<PrdCreationResult | null>((resolve) => {
+    const handleComplete = (result: PrdCreationResult) => {
       root.unmount();
       renderer.destroy();
       console.log('');
-      console.log(`PRD workflow complete: ${prdPath}`);
-      resolve();
+      console.log(`PRD workflow complete: ${result.prdPath}`);
+      resolve(result);
     };
 
     const handleCancel = () => {
@@ -193,7 +196,7 @@ async function runChatMode(parsedArgs: CreatePrdArgs): Promise<void> {
       renderer.destroy();
       console.log('');
       console.log('PRD creation cancelled.');
-      resolve();
+      resolve(null);
     };
 
     const handleError = (error: string) => {
@@ -217,6 +220,7 @@ async function runChatMode(parsedArgs: CreatePrdArgs): Promise<void> {
 /**
  * Execute the create-prd command.
  * Always uses AI-powered chat mode for conversational PRD creation.
+ * If a tracker format is selected, launches ralph-tui run with the tasks loaded.
  */
 export async function executeCreatePrdCommand(args: string[]): Promise<void> {
   const parsedArgs = parseCreatePrdArgs(args);
@@ -225,6 +229,31 @@ export async function executeCreatePrdCommand(args: string[]): Promise<void> {
   // Verify setup is complete before running
   await requireSetup(cwd, 'ralph-tui prime');
 
-  await runChatMode(parsedArgs);
+  const result = await runChatMode(parsedArgs);
+
+  // If cancelled or no result, exit
+  if (!result) {
+    process.exit(0);
+  }
+
+  // If a tracker format was selected, launch ralph-tui with the tasks loaded
+  if (result.selectedTracker) {
+    console.log('');
+    console.log('Launching Ralph TUI with your new tasks...');
+    console.log('');
+
+    const runArgs: string[] = [];
+
+    if (result.selectedTracker === 'json') {
+      // JSON tracker: pass the prd.json path
+      runArgs.push('--prd', 'scripts/ralph/prd.json');
+    }
+    // For beads: no args needed, epic selection will show
+
+    // Execute run command (this will show the TUI)
+    await executeRunCommand(runArgs);
+    // Note: executeRunCommand handles process.exit internally
+  }
+
   process.exit(0);
 }
