@@ -32,7 +32,13 @@
       "Bash(timeout 10 ./dist/cli.js:*)",
       "Bash(bd dep add:*)",
       "Bash(bd update:*)",
-      "WebFetch(domain:docs.anthropic.com)"
+      "WebFetch(domain:docs.anthropic.com)",
+      "Bash(node:*)",
+      "Bash(timeout 5 bun:*)",
+      "Bash(timeout 8 bun:*)",
+      "Bash(timeout 10 bun:*)",
+      "Bash(timeout 15 bun:*)",
+      "Skill(create-beads-for-ralph)"
     ]
   }
 }

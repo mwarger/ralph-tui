@@ -47,16 +47,25 @@ export function generateLogFilename(iteration: number, taskId: string): string {
 
 /**
  * Get the full path to the iterations directory.
+ * @param cwd Working directory
+ * @param customDir Optional custom directory (relative to cwd or absolute)
  */
-export function getIterationsDir(cwd: string): string {
-  return join(cwd, ITERATIONS_DIR);
+export function getIterationsDir(cwd: string, customDir?: string): string {
+  const dir = customDir ?? ITERATIONS_DIR;
+  // If customDir is absolute, use it directly; otherwise join with cwd
+  if (customDir && (customDir.startsWith('/') || customDir.match(/^[A-Za-z]:/))) {
+    return customDir;
+  }
+  return join(cwd, dir);
 }
 
 /**
  * Ensure the iterations directory exists.
+ * @param cwd Working directory
+ * @param customDir Optional custom directory
  */
-export async function ensureIterationsDir(cwd: string): Promise<void> {
-  const dir = getIterationsDir(cwd);
+export async function ensureIterationsDir(cwd: string, customDir?: string): Promise<void> {
+  const dir = getIterationsDir(cwd, customDir);
   await mkdir(dir, { recursive: true });
 }
 
@@ -217,11 +226,12 @@ export async function saveIterationLog(
   stderr: string,
   config?: Partial<RalphConfig>
 ): Promise<string> {
-  await ensureIterationsDir(cwd);
+  const outputDir = config?.outputDir;
+  await ensureIterationsDir(cwd, outputDir);
 
   const metadata = buildMetadata(result, config);
   const filename = generateLogFilename(result.iteration, result.task.id);
-  const filePath = join(getIterationsDir(cwd), filename);
+  const filePath = join(getIterationsDir(cwd, outputDir), filename);
 
   // Build file content with structured header and raw output
   const header = formatMetadataHeader(metadata);
@@ -273,12 +283,16 @@ export async function loadIterationLog(filePath: string): Promise<IterationLog |
 
 /**
  * List all iteration logs in the iterations directory.
+ * @param cwd Working directory
+ * @param options Filter options
+ * @param customDir Optional custom iterations directory
  */
 export async function listIterationLogs(
   cwd: string,
-  options: LogFilterOptions = {}
+  options: LogFilterOptions = {},
+  customDir?: string
 ): Promise<IterationLogSummary[]> {
-  const dir = getIterationsDir(cwd);
+  const dir = getIterationsDir(cwd, customDir);
 
   let files: string[];
   try {
@@ -362,12 +376,16 @@ export async function getIterationLogByNumber(
 
 /**
  * Get iteration logs for a specific task.
+ * @param cwd Working directory
+ * @param taskId Task ID to filter by
+ * @param customDir Optional custom iterations directory
  */
 export async function getIterationLogsByTask(
   cwd: string,
-  taskId: string
+  taskId: string,
+  customDir?: string
 ): Promise<IterationLog[]> {
-  const summaries = await listIterationLogs(cwd, { taskId });
+  const summaries = await listIterationLogs(cwd, { taskId }, customDir);
   const logs: IterationLog[] = [];
 
   for (const summary of summaries) {

@@ -277,7 +277,7 @@ export class OpenCodeAgentPlugin extends BaseAgentPlugin {
   }
 
   protected buildArgs(
-    prompt: string,
+    _prompt: string,
     files?: AgentFileContext[],
     _options?: AgentExecuteOptions
   ): string[] {
@@ -305,10 +305,22 @@ export class OpenCodeAgentPlugin extends BaseAgentPlugin {
       }
     }
 
-    // Add the prompt as the final argument
-    args.push(prompt);
+    // NOTE: Prompt is NOT added here - it's passed via stdin to avoid
+    // shell interpretation of special characters (markdown bullets, etc.)
 
     return args;
+  }
+
+  /**
+   * Provide the prompt via stdin instead of command args.
+   * This avoids shell interpretation issues with special characters in prompts.
+   */
+  protected override getStdinInput(
+    prompt: string,
+    _files?: AgentFileContext[],
+    _options?: AgentExecuteOptions
+  ): string {
+    return prompt;
   }
 
   /**

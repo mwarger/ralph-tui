@@ -52,6 +52,9 @@ export interface RuntimeOptions {
 
   /** Custom prompt file path (overrides config and defaults) */
   promptPath?: string;
+
+  /** Output directory for iteration logs (overrides config) */
+  outputDir?: string;
 }
 
 /**
@@ -173,7 +176,7 @@ export const DEFAULT_CONFIG: Omit<RalphConfig, 'agent' | 'tracker'> = {
   maxIterations: 10,
   iterationDelay: 1000,
   cwd: process.cwd(),
-  outputDir: '.ralph-output',
+  outputDir: '.ralph-tui/iterations',
   showTui: true,
   errorHandling: DEFAULT_ERROR_HANDLING,
 };

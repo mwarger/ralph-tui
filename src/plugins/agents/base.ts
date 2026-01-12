@@ -160,6 +160,23 @@ export abstract class BaseAgentPlugin implements AgentPlugin {
   ): string[];
 
   /**
+   * Get input to write to stdin after spawning the process.
+   * Override in subclasses to provide stdin input (e.g., prompt content).
+   * Returning undefined means no stdin input will be written.
+   * @param prompt The prompt to send to the agent
+   * @param files Optional file context
+   * @param options Execution options
+   * @returns String to write to stdin, or undefined for no stdin input
+   */
+  protected getStdinInput(
+    _prompt: string,
+    _files?: AgentFileContext[],
+    _options?: AgentExecuteOptions
+  ): string | undefined {
+    return undefined;
+  }
+
+  /**
    * Execute the agent with a prompt.
    * Uses spawn to run the CLI and capture output.
    */
@@ -192,12 +209,24 @@ export abstract class BaseAgentPlugin implements AgentPlugin {
     });
 
     // Spawn the process
+    // Note: shell: false to avoid shell interpretation of special characters in args
+    // The prompt will be passed via stdin if getStdinInput returns content
     const proc = spawn(command, allArgs, {
       cwd: options?.cwd ?? process.cwd(),
       env,
-      stdio: ['ignore', 'pipe', 'pipe'],
-      shell: true,
+      stdio: ['pipe', 'pipe', 'pipe'],
+      shell: false,
     });
+
+    // Write to stdin if subclass provides input (e.g., prompt content)
+    const stdinInput = this.getStdinInput(prompt, files, options);
+    if (stdinInput !== undefined && proc.stdin) {
+      proc.stdin.write(stdinInput);
+      proc.stdin.end();
+    } else if (proc.stdin) {
+      // Close stdin if no input to prevent hanging
+      proc.stdin.end();
+    }
 
     // Create running execution entry
     const execution: RunningExecution = {

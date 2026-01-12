@@ -154,6 +154,14 @@ export function parseRunArgs(args: string[]): ExtendedRuntimeOptions {
           i++;
         }
         break;
+
+      case '--output-dir':
+      case '--log-dir':
+        if (nextArg && !nextArg.startsWith('-')) {
+          options.outputDir = nextArg;
+          i++;
+        }
+        break;
     }
   }
 
@@ -176,6 +184,7 @@ Options:
   --model <name>      Override model (e.g., opus, sonnet)
   --tracker <name>    Override tracker plugin (e.g., beads, beads-bv, json)
   --prompt <path>     Custom prompt file (default: based on tracker mode)
+  --output-dir <path> Directory for iteration logs (default: .ralph-tui/iterations)
   --iterations <n>    Maximum iterations (0 = unlimited)
   --delay <ms>        Delay between iterations in milliseconds
   --cwd <path>        Working directory
@@ -571,8 +580,8 @@ function RunAppWrapper({
     // Update current epic ID
     setCurrentEpicId(epic.id);
 
-    // Refresh tasks from tracker
-    const newTasks = await tracker.getTasks({ status: ['open', 'in_progress'] });
+    // Refresh tasks from tracker (including completed for display)
+    const newTasks = await tracker.getTasks({ status: ['open', 'in_progress', 'completed'] });
     setTasks(newTasks);
 
     // Trigger task refresh in engine
@@ -591,8 +600,8 @@ function RunAppWrapper({
     if (jsonTracker.setFilePath) {
       const success = await jsonTracker.setFilePath(path);
       if (success) {
-        // Refresh tasks from tracker
-        const newTasks = await tracker.getTasks({ status: ['open', 'in_progress'] });
+        // Refresh tasks from tracker (including completed for display)
+        const newTasks = await tracker.getTasks({ status: ['open', 'in_progress', 'completed'] });
         setTasks(newTasks);
         engine.refreshTasks();
       }
@@ -617,6 +626,7 @@ function RunAppWrapper({
   return (
     <RunApp
       engine={engine}
+      cwd={cwd}
       onQuit={onQuit}
       showInterruptDialog={showInterruptDialog}
       onInterruptConfirm={async () => {
@@ -1230,7 +1240,7 @@ export async function executeRunCommand(args: string[]): Promise<void> {
     // This must happen before we fetch tasks, so they reflect any resets
     await detectAndHandleStaleTasks(config.cwd, tracker, options.headless ?? false);
 
-    tasks = await tracker.getTasks({ status: ['open', 'in_progress'] });
+    tasks = await tracker.getTasks({ status: ['open', 'in_progress', 'completed'] });
   } catch (error) {
     console.error(
       'Failed to initialize engine:',

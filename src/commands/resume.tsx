@@ -138,6 +138,7 @@ async function runWithTui(
   root.render(
     <RunApp
       engine={engine}
+      cwd={cwd}
       onQuit={async () => {
         // Save interrupted state
         currentState = { ...currentState, status: 'interrupted' };
