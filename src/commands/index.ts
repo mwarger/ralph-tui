@@ -52,10 +52,10 @@ export {
 } from './template.js';
 
 export {
-  executeInitCommand,
-  parseInitArgs,
-  printInitHelp,
-} from './init.js';
+  executeCreatePrdCommand,
+  parseCreatePrdArgs,
+  printCreatePrdHelp,
+} from './create-prd.jsx';
 
 export {
   executeConvertCommand,

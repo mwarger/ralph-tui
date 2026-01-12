@@ -26,7 +26,13 @@ import {
   printSection,
   printSuccess,
   printInfo,
+  printError,
 } from './prompts.js';
+import {
+  listBundledSkills,
+  installSkill,
+  isSkillInstalled,
+} from './skill-installer.js';
 
 /**
  * Config filename
@@ -311,6 +317,47 @@ export async function runSetupWizard(
         help: 'Automatically commit changes after each successful task.',
       }
     );
+
+    // === Step 4: Skills Installation ===
+    printSection('AI Skills Installation');
+
+    const bundledSkills = await listBundledSkills();
+
+    if (bundledSkills.length > 0) {
+      printInfo('Ralph TUI includes AI skills that enhance agent capabilities.');
+      console.log();
+
+      for (const skill of bundledSkills) {
+        const alreadyInstalled = await isSkillInstalled(skill.name);
+
+        if (alreadyInstalled) {
+          printInfo(`  ${skill.name}: Already installed`);
+          continue;
+        }
+
+        const installThisSkill = await promptBoolean(
+          `Install skill: ${skill.name}?`,
+          {
+            default: true,
+            help: skill.description,
+          }
+        );
+
+        if (installThisSkill) {
+          const result = await installSkill(skill.name);
+          if (result.success) {
+            printSuccess(`  Installed: ${skill.name}`);
+            if (result.path) {
+              printInfo(`    Location: ${result.path}`);
+            }
+          } else {
+            printError(`  Failed to install ${skill.name}: ${result.error}`);
+          }
+        }
+      }
+    } else {
+      printInfo('No bundled skills available for installation.');
+    }
 
     // === Save Configuration ===
     const answers: SetupAnswers = {

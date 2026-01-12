@@ -18,7 +18,7 @@ import {
   executeSetupCommand,
   executeLogsCommand,
   executeTemplateCommand,
-  executeInitCommand,
+  executeCreatePrdCommand,
   executeConvertCommand,
   executeDocsCommand,
 } from './commands/index.js';
@@ -34,13 +34,13 @@ Usage: ralph-tui [command] [options]
 
 Commands:
   (none)              Launch the interactive TUI
-  init [options]      Create a new PRD interactively
+  create-prd [opts]   Create a new PRD interactively (alias: prd)
   convert [options]   Convert PRD markdown to JSON format
   run [options]       Start Ralph execution
   resume [options]    Resume an interrupted session
   status [options]    Check session status (headless, for CI/scripts)
   logs [options]      View/manage iteration output logs
-  setup [options]     Run interactive project setup
+  setup [options]     Run interactive project setup (alias: init)
   config show         Display merged configuration
   template show       Display current prompt template
   template init       Copy default template for customization
@@ -78,7 +78,8 @@ Convert Options:
 
 Examples:
   ralph-tui                              # Start the TUI
-  ralph-tui init                         # Create a new PRD interactively
+  ralph-tui create-prd                   # Create a new PRD interactively
+  ralph-tui create-prd --chat            # Create PRD with AI chat mode
   ralph-tui convert --to json ./prd.md   # Convert PRD to JSON
   ralph-tui run                          # Start execution with defaults
   ralph-tui run --epic myproject-epic    # Run with specific epic
@@ -112,9 +113,15 @@ async function handleSubcommand(args: string[]): Promise<boolean> {
     return true;
   }
 
-  // Init command
+  // Create-PRD command (with aliases: prd)
+  if (command === 'create-prd' || command === 'prd') {
+    await executeCreatePrdCommand(args.slice(1));
+    return true;
+  }
+
+  // Init command (alias for setup)
   if (command === 'init') {
-    await executeInitCommand(args.slice(1));
+    await executeSetupCommand(args.slice(1));
     return true;
   }
 

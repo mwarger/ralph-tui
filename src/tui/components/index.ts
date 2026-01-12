@@ -28,3 +28,7 @@ export { EpicSelectionApp } from './EpicSelectionApp.js';
 export type { EpicSelectionAppProps } from './EpicSelectionApp.js';
 export { SettingsView } from './SettingsView.js';
 export type { SettingsViewProps } from './SettingsView.js';
+export { ChatView } from './ChatView.js';
+export type { ChatViewProps } from './ChatView.js';
+export { PrdChatApp } from './PrdChatApp.js';
+export type { PrdChatAppProps } from './PrdChatApp.js';
