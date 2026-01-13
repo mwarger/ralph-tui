@@ -5,8 +5,31 @@
  */
 
 import type { ReactNode } from 'react';
+import { useState, useEffect } from 'react';
 import { colors } from '../theme.js';
 import type { ChatMessage } from '../../chat/types.js';
+
+/**
+ * Spinner frames for animation
+ */
+const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+
+/**
+ * Animated spinner component for loading states
+ */
+function AnimatedSpinner(): ReactNode {
+  const [frameIndex, setFrameIndex] = useState(0);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setFrameIndex((prev) => (prev + 1) % SPINNER_FRAMES.length);
+    }, 80);
+
+    return () => clearInterval(interval);
+  }, []);
+
+  return <text fg={colors.status.info}>{SPINNER_FRAMES[frameIndex]}</text>;
+}
 
 /**
  * Props for the ChatView component
@@ -44,6 +67,9 @@ export interface ChatViewProps {
 
   /** Hint text for the footer */
   hint?: string;
+
+  /** Name of the agent (for loading messages) */
+  agentName?: string;
 }
 
 /**
@@ -105,7 +131,12 @@ export function ChatView({
   error,
   inputEnabled = true,
   hint = '[Enter] Send  [Esc] Cancel',
+  agentName,
 }: ChatViewProps): ReactNode {
+  // Generate dynamic loading text
+  const loadingText = agentName
+    ? `Waiting for ${agentName}...`
+    : loadingStatus;
   return (
     <box
       style={{
@@ -169,7 +200,7 @@ export function ChatView({
             <box style={{ flexDirection: 'column', marginBottom: 1 }}>
               <box style={{ flexDirection: 'row', gap: 1 }}>
                 <text fg={colors.accent.secondary}>Assistant</text>
-                <text fg={colors.status.info}>●</text>
+                <AnimatedSpinner />
               </box>
               <box style={{ paddingLeft: 2 }}>
                 <text fg={colors.fg.primary}>
@@ -183,8 +214,8 @@ export function ChatView({
           {isLoading && !streamingChunk && (
             <box style={{ flexDirection: 'row', gap: 1, marginBottom: 1 }}>
               <text fg={colors.accent.secondary}>Assistant</text>
-              <text fg={colors.status.info}>●</text>
-              <text fg={colors.fg.muted}>{loadingStatus}</text>
+              <AnimatedSpinner />
+              <text fg={colors.fg.muted}>{loadingText}</text>
             </box>
           )}
 
@@ -244,11 +275,14 @@ export function ChatView({
             flexDirection: 'row',
             justifyContent: 'center',
             alignItems: 'center',
-            gap: 2,
+            gap: 1,
           }}
         >
           {isLoading ? (
-            <text fg={colors.status.info}>{loadingStatus}</text>
+            <>
+              <AnimatedSpinner />
+              <text fg={colors.status.info}>{loadingText}</text>
+            </>
           ) : (
             <text fg={colors.fg.muted}>{hint}</text>
           )}

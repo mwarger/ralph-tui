@@ -511,6 +511,7 @@ Read the PRD and create the appropriate tasks.`;
             error={error}
             inputEnabled={!isLoading}
             hint={hint}
+            agentName={agent.meta.name}
           />
         </box>
 
@@ -537,6 +538,7 @@ Read the PRD and create the appropriate tasks.`;
         error={error}
         inputEnabled={!isLoading && !showQuitConfirm}
         hint={hint}
+        agentName={agent.meta.name}
       />
       <ConfirmationDialog
         visible={showQuitConfirm}
