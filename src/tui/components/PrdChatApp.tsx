@@ -217,6 +217,7 @@ export function PrdChatApp({
 
   // Refs
   const engineRef = useRef<ChatEngine | null>(null);
+  const taskEngineRef = useRef<ChatEngine | null>(null);
   const isMountedRef = useRef(true);
 
   // Get tracker options
@@ -231,6 +232,7 @@ export function PrdChatApp({
       prdSkill,
       prdSkillSource,
     });
+    const taskEngine = createTaskChatEngine(agent, { cwd, timeout });
 
     // Subscribe to events
     const unsubscribe = engine.on((event: ChatEvent) => {
@@ -253,6 +255,7 @@ export function PrdChatApp({
     });
 
     engineRef.current = engine;
+    taskEngineRef.current = taskEngine;
 
     return () => {
       isMountedRef.current = false;
@@ -323,7 +326,16 @@ Press a number key to select, or continue chatting.`,
    */
   const handleTrackerSelect = useCallback(
     async (option: TrackerOption) => {
-      if (!engineRef.current || !prdPath || isLoading) return;
+      if (!taskEngineRef.current || !prdPath || !prdContent || isLoading) return;
+
+      const parsedPrd = parsePrdMarkdown(prdContent);
+      if (parsedPrd.userStories.length === 0) {
+        const errorMessage =
+          'PRD has no user stories. Add sections like "### US-001: Title" with acceptance criteria checklists.';
+        setError(errorMessage);
+        onError?.(errorMessage);
+        return;
+      }
 
       // Record which tracker format was selected
       const format = option.key === '1' ? 'json' : 'beads';
@@ -348,7 +360,7 @@ The PRD file is at: ${prdPath}
 Read the PRD and create the appropriate tasks.`;
 
       try {
-        const result = await engineRef.current.sendMessage(prompt, {
+        const result = await taskEngineRef.current.sendMessage(prompt, {
           onChunk: (chunk) => {
             if (isMountedRef.current) {
               setStreamingChunk((prev) => prev + chunk);
@@ -389,7 +401,7 @@ Read the PRD and create the appropriate tasks.`;
         }
       }
     },
-    [prdPath, isLoading]
+    [prdPath, prdContent, isLoading, onError]
   );
 
   /**
