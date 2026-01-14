@@ -6,7 +6,7 @@
  */
 
 import { spawn } from 'node:child_process';
-import { BaseAgentPlugin } from '../base.js';
+import { BaseAgentPlugin, findCommandPath } from '../base.js';
 import type {
   AgentPluginMeta,
   AgentPluginFactory,
@@ -115,16 +115,16 @@ export class ClaudeAgentPlugin extends BaseAgentPlugin {
   }
 
   /**
-   * Detect claude CLI availability using `which` command.
-   * Falls back to testing direct execution if `which` is not available.
+   * Detect claude CLI availability.
+   * Uses platform-appropriate command (where on Windows, which on Unix).
    */
   override async detect(): Promise<AgentDetectResult> {
     const command = this.commandPath ?? this.meta.defaultCommand;
 
-    // First, try to find the binary using `which`
-    const whichResult = await this.runWhich(command);
+    // First, try to find the binary in PATH
+    const findResult = await findCommandPath(command);
 
-    if (!whichResult.found) {
+    if (!findResult.found) {
       return {
         available: false,
         error: `Claude CLI not found in PATH. Install with: npm install -g @anthropic-ai/claude-code`,
@@ -132,12 +132,12 @@ export class ClaudeAgentPlugin extends BaseAgentPlugin {
     }
 
     // Verify the binary works by running --version
-    const versionResult = await this.runVersion(whichResult.path);
+    const versionResult = await this.runVersion(findResult.path);
 
     if (!versionResult.success) {
       return {
         available: false,
-        executablePath: whichResult.path,
+        executablePath: findResult.path,
         error: versionResult.error,
       };
     }
@@ -145,43 +145,8 @@ export class ClaudeAgentPlugin extends BaseAgentPlugin {
     return {
       available: true,
       version: versionResult.version,
-      executablePath: whichResult.path,
+      executablePath: findResult.path,
     };
-  }
-
-  /**
-   * Run `which` command to find binary path
-   */
-  private runWhich(command: string): Promise<{ found: boolean; path: string }> {
-    return new Promise((resolve) => {
-      const proc = spawn('which', [command], {
-        stdio: ['ignore', 'pipe', 'pipe'],
-      });
-
-      let stdout = '';
-
-      proc.stdout?.on('data', (data: Buffer) => {
-        stdout += data.toString();
-      });
-
-      proc.on('error', () => {
-        resolve({ found: false, path: '' });
-      });
-
-      proc.on('close', (code) => {
-        if (code === 0 && stdout.trim()) {
-          resolve({ found: true, path: stdout.trim() });
-        } else {
-          resolve({ found: false, path: '' });
-        }
-      });
-
-      // Timeout after 5 seconds
-      setTimeout(() => {
-        proc.kill();
-        resolve({ found: false, path: '' });
-      }, 5000);
-    });
   }
 
   /**

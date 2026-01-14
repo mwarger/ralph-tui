@@ -6,7 +6,7 @@
 
 import { spawn, type ChildProcess } from 'node:child_process';
 import { appendFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { tmpdir, platform } from 'node:os';
 import { join } from 'node:path';
 
 /** Debug log helper - writes to file to avoid TUI interference */
@@ -20,6 +20,55 @@ function debugLog(msg: string): void {
     }
   }
 }
+
+/**
+ * Find a command's path using the platform-appropriate utility.
+ * Uses `where` on Windows and `which` on Unix-like systems.
+ * @param command The command name to find
+ * @returns Promise with found status and path
+ */
+export function findCommandPath(
+  command: string
+): Promise<{ found: boolean; path: string }> {
+  return new Promise((resolve) => {
+    const isWindows = platform() === 'win32';
+    const whichCmd = isWindows ? 'where' : 'which';
+
+    const proc = spawn(whichCmd, [command], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      // On Windows, 'where' needs shell for proper PATH resolution
+      shell: isWindows,
+    });
+
+    let stdout = '';
+
+    proc.stdout?.on('data', (data: Buffer) => {
+      stdout += data.toString();
+    });
+
+    proc.on('error', () => {
+      resolve({ found: false, path: '' });
+    });
+
+    proc.on('close', (code) => {
+      if (code === 0 && stdout.trim()) {
+        // On Windows, 'where' may return multiple paths (one per line)
+        // Take the first one
+        const firstPath = stdout.trim().split(/\r?\n/)[0] ?? '';
+        resolve({ found: true, path: firstPath.trim() });
+      } else {
+        resolve({ found: false, path: '' });
+      }
+    });
+
+    // Timeout after 5 seconds
+    setTimeout(() => {
+      proc.kill();
+      resolve({ found: false, path: '' });
+    }, 5000);
+  });
+}
+
 import { randomUUID } from 'node:crypto';
 import type {
   AgentPlugin,
