@@ -20,6 +20,7 @@ import type { AgentPluginConfig } from '../plugins/agents/types.js';
 import type { TrackerPluginConfig } from '../plugins/trackers/types.js';
 import { getAgentRegistry } from '../plugins/agents/registry.js';
 import { getTrackerRegistry } from '../plugins/trackers/registry.js';
+import { DroidAgentConfigSchema } from '../plugins/agents/droid/schema.js';
 import {
   validateStoredConfig,
   formatConfigErrors,
@@ -556,6 +557,16 @@ export async function validateConfig(
   const agentRegistry = getAgentRegistry();
   if (!agentRegistry.hasPlugin(config.agent.plugin)) {
     errors.push(`Agent plugin '${config.agent.plugin}' not found`);
+  }
+
+  if (config.agent.plugin === 'droid') {
+    const result = DroidAgentConfigSchema.safeParse(config.agent.options ?? {});
+    if (!result.success) {
+      for (const issue of result.error.issues) {
+        const path = issue.path.length > 0 ? issue.path.join('.') : '(root)';
+        errors.push(`Droid agent config ${path}: ${issue.message}`);
+      }
+    }
   }
 
   // Validate tracker plugin exists

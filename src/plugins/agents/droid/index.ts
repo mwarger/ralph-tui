@@ -12,6 +12,7 @@ import type {
 } from '../types.js';
 import { buildDroidCommandArgs } from './commandBuilder.js';
 import { DROID_DEFAULT_COMMAND } from './config.js';
+import { DroidAgentConfigSchema, type DroidReasoningEffort } from './schema.js';
 
 export class DroidAgentPlugin extends BaseAgentPlugin {
   readonly meta: AgentPluginMeta = {
@@ -27,13 +28,42 @@ export class DroidAgentPlugin extends BaseAgentPlugin {
     supportsSubagentTracing: false,
   };
 
+  private model?: string;
+  private reasoningEffort?: DroidReasoningEffort;
+
+  override async initialize(config: Record<string, unknown>): Promise<void> {
+    await super.initialize(config);
+
+    const parsed = DroidAgentConfigSchema.safeParse({
+      model: config.model,
+      reasoningEffort: config.reasoningEffort,
+    });
+
+    if (!parsed.success) {
+      return;
+    }
+
+    if (typeof parsed.data.model === 'string' && parsed.data.model.length > 0) {
+      this.model = parsed.data.model;
+    }
+
+    if (parsed.data.reasoningEffort) {
+      this.reasoningEffort = parsed.data.reasoningEffort;
+    }
+  }
+
   protected buildArgs(
     prompt: string,
     _files?: AgentFileContext[],
     options?: AgentExecuteOptions
   ): string[] {
     const cwd = options?.cwd ?? process.cwd();
-    return buildDroidCommandArgs({ prompt, cwd });
+    return buildDroidCommandArgs({
+      prompt,
+      cwd,
+      model: this.model,
+      reasoningEffort: this.reasoningEffort,
+    });
   }
 }
 
