@@ -172,6 +172,44 @@ export async function hasPersistedSession(cwd: string): Promise<boolean> {
 }
 
 /**
+ * Validate that a loaded session has required fields.
+ * Returns null if valid, or an error message if invalid.
+ */
+function validateLoadedSession(parsed: unknown): string | null {
+  if (!parsed || typeof parsed !== 'object') {
+    return 'Session file is not a valid object';
+  }
+
+  const session = parsed as Record<string, unknown>;
+
+  // Required top-level fields
+  if (typeof session.sessionId !== 'string') {
+    return 'Missing or invalid sessionId';
+  }
+  if (typeof session.status !== 'string') {
+    return 'Missing or invalid status';
+  }
+
+  // trackerState is required and must have required sub-fields
+  if (!session.trackerState || typeof session.trackerState !== 'object') {
+    return 'Missing or invalid trackerState (session may be from an older version)';
+  }
+
+  const trackerState = session.trackerState as Record<string, unknown>;
+  if (typeof trackerState.plugin !== 'string') {
+    return 'Missing trackerState.plugin';
+  }
+  if (typeof trackerState.totalTasks !== 'number') {
+    return 'Missing trackerState.totalTasks';
+  }
+  if (!Array.isArray(trackerState.tasks)) {
+    return 'Missing trackerState.tasks array';
+  }
+
+  return null;
+}
+
+/**
  * Load persisted session state
  */
 export async function loadPersistedSession(
@@ -181,11 +219,23 @@ export async function loadPersistedSession(
 
   try {
     const content = await readFile(filePath, 'utf-8');
-    const parsed = JSON.parse(content) as PersistedSessionState;
+    const parsed = JSON.parse(content);
+
+    // Validate required fields exist
+    const validationError = validateLoadedSession(parsed);
+    if (validationError) {
+      console.warn(
+        `Invalid session file: ${validationError}. ` +
+          'Delete .ralph-tui/session.json to start fresh.'
+      );
+      return null;
+    }
+
+    const session = parsed as PersistedSessionState;
 
     // Validate schema version
     // Treat undefined as version 1 (backward compatible with pre-versioning files)
-    const version = parsed.version ?? 1;
+    const version = session.version ?? 1;
     if (version !== 1) {
       console.warn(
         `Unknown session file version: ${version}. ` +
@@ -194,9 +244,9 @@ export async function loadPersistedSession(
     }
 
     // Ensure version field is set for future saves
-    parsed.version = 1;
+    session.version = 1;
 
-    return parsed;
+    return session;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
       return null;
@@ -592,6 +642,13 @@ export function getSessionSummary(state: PersistedSessionState): {
   epicId?: string;
   prdPath?: string;
 } {
+  // Defensive: handle missing trackerState (corrupted/old session files)
+  const trackerState = state.trackerState ?? {
+    plugin: 'unknown',
+    totalTasks: 0,
+    tasks: [],
+  };
+
   return {
     sessionId: state.sessionId,
     status: state.status,
@@ -600,12 +657,12 @@ export function getSessionSummary(state: PersistedSessionState): {
     currentIteration: state.currentIteration,
     maxIterations: state.maxIterations,
     tasksCompleted: state.tasksCompleted,
-    totalTasks: state.trackerState.totalTasks,
+    totalTasks: trackerState.totalTasks ?? 0,
     isPaused: state.isPaused,
     isResumable: isSessionResumable(state),
     agentPlugin: state.agentPlugin,
-    trackerPlugin: state.trackerState.plugin,
-    epicId: state.trackerState.epicId,
-    prdPath: state.trackerState.prdPath,
+    trackerPlugin: trackerState.plugin ?? 'unknown',
+    epicId: trackerState.epicId,
+    prdPath: trackerState.prdPath,
   };
 }
