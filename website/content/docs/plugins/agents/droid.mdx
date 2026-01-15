@@ -76,7 +76,7 @@ enableTracing = true
 |--------|------|---------|-------------|
 | `model` | string | - | Model name passed to the droid CLI via `--model` |
 | `reasoningEffort` | `low` \| `medium` \| `high` | - | Reasoning effort level passed via `--reasoning-effort` |
-| `skipPermissions` | boolean | `false` | Enables `--skip-permissions-unsafe` for autonomous runs |
+| `skipPermissions` | boolean | `true` | Enables `--skip-permissions-unsafe` for autonomous runs |
 | `enableTracing` | boolean | `true` | Enables JSONL stream output (`--output-format stream-json`) |
 
 ## Models and Reasoning Effort
@@ -110,15 +110,15 @@ Tracing requires `subagentTracingDetail` to be set above `"off"`.
 
 ## Autonomous Operation (Skip Permissions)
 
-Factory Droid normally asks for permission before executing tool actions. Set `skipPermissions = true` to bypass prompts:
+Factory Droid normally asks for permission before executing tool actions. By default, Ralph TUI enables `skipPermissions = true` for autonomous operation. To require manual approvals, disable it:
 
 ```toml
 [agentOptions]
-skipPermissions = true
+skipPermissions = false
 ```
 
 <Callout type="warning">
-Only enable skip permissions for trusted tasks. The agent will run without interactive approvals.
+With skip permissions enabled (the default), the agent runs without interactive approvals. Set `skipPermissions = false` if you need manual confirmation of tool actions.
 </Callout>
 
 ## How It Works
