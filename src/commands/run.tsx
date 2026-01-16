@@ -9,7 +9,7 @@ import { useState } from 'react';
 import { createCliRenderer } from '@opentui/core';
 import { createRoot } from '@opentui/react';
 import { buildConfig, validateConfig, loadStoredConfig, saveProjectConfig } from '../config/index.js';
-import type { RuntimeOptions, StoredConfig } from '../config/types.js';
+import type { RuntimeOptions, StoredConfig, SandboxConfig } from '../config/types.js';
 import {
   checkSession,
   createSession,
@@ -54,6 +54,8 @@ import type { InterruptHandler } from '../interruption/types.js';
 import { createStructuredLogger, clearProgress } from '../logs/index.js';
 import { sendCompletionNotification, sendMaxIterationsNotification, sendErrorNotification, resolveNotificationsEnabled } from '../notifications.js';
 import type { NotificationSoundMode } from '../config/types.js';
+import { detectSandboxMode } from '../sandbox/index.js';
+import type { SandboxMode } from '../sandbox/index.js';
 
 /**
  * Extended runtime options with noSetup flag
@@ -71,6 +73,18 @@ export function parseRunArgs(args: string[]): ExtendedRuntimeOptions {
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
     const nextArg = args[i + 1];
+
+    if (arg.startsWith('--sandbox=')) {
+      const mode = arg.split('=')[1];
+      if (mode === 'bwrap' || mode === 'sandbox-exec') {
+        options.sandbox = {
+          ...options.sandbox,
+          enabled: true,
+          mode,
+        };
+      }
+      continue;
+    }
 
     switch (arg) {
       case '--epic':
@@ -152,6 +166,30 @@ export function parseRunArgs(args: string[]): ExtendedRuntimeOptions {
         options.noSetup = true;
         break;
 
+      case '--sandbox':
+        options.sandbox = {
+          ...options.sandbox,
+          enabled: true,
+          mode: 'auto',
+        };
+        break;
+
+      case '--no-sandbox':
+        options.sandbox = {
+          ...options.sandbox,
+          enabled: false,
+          mode: 'off',
+        };
+        break;
+
+      case '--no-network':
+        options.sandbox = {
+          ...options.sandbox,
+          enabled: true,
+          network: false,
+        };
+        break;
+
       case '--prompt':
         if (nextArg && !nextArg.startsWith('-')) {
           options.promptPath = nextArg;
@@ -215,6 +253,11 @@ Options:
   --no-setup          Skip interactive setup even if no config exists
   --notify            Force enable desktop notifications
   --no-notify         Force disable desktop notifications
+  --sandbox           Enable sandboxing (auto mode)
+  --sandbox=bwrap     Force Bubblewrap sandboxing (Linux)
+  --sandbox=sandbox-exec  Force sandbox-exec (macOS)
+  --no-sandbox        Disable sandboxing
+  --no-network        Disable network access in sandbox
 
 Log Output Format (--no-tui mode):
   [timestamp] [level] [component] message
@@ -545,6 +588,10 @@ interface RunAppWrapperProps {
   onUpdatePersistedState?: (updater: (state: PersistedSessionState) => PersistedSessionState) => void;
   /** Current model being used (provider/model format, e.g., "anthropic/claude-3-5-sonnet") */
   currentModel?: string;
+  /** Sandbox configuration for display in header */
+  sandboxConfig?: SandboxConfig;
+  /** Resolved sandbox mode (when mode is 'auto', this shows what it resolved to) */
+  resolvedSandboxMode?: Exclude<SandboxMode, 'auto'>;
 }
 
 /**
@@ -566,6 +613,8 @@ function RunAppWrapper({
   initialSubagentPanelVisible = false,
   onUpdatePersistedState,
   currentModel,
+  sandboxConfig,
+  resolvedSandboxMode,
 }: RunAppWrapperProps) {
   const [showInterruptDialog, setShowInterruptDialog] = useState(false);
   const [storedConfig, setStoredConfig] = useState<StoredConfig | undefined>(initialStoredConfig);
@@ -693,6 +742,8 @@ function RunAppWrapper({
       initialSubagentPanelVisible={initialSubagentPanelVisible}
       onSubagentPanelVisibilityChange={handleSubagentPanelVisibilityChange}
       currentModel={currentModel}
+      sandboxConfig={sandboxConfig}
+      resolvedSandboxMode={resolvedSandboxMode}
     />
   );
 }
@@ -781,6 +832,9 @@ async function runWithTui(
     } else if (event.type === 'engine:started') {
       // Track when engine started for duration calculation
       engineStartTime = new Date();
+    } else if (event.type === 'engine:warning') {
+      // Log configuration warnings to stderr (visible after TUI exits)
+      console.error(`\n⚠️  ${event.message}\n`);
     } else if (event.type === 'all:complete') {
       // Send completion notification if enabled
       if (notificationOptions?.notificationsEnabled && engineStartTime) {
@@ -895,6 +949,11 @@ async function runWithTui(
     });
   };
 
+  // Detect actual sandbox mode at startup (resolve 'auto' to concrete mode)
+  const resolvedSandboxMode = config.sandbox?.enabled
+    ? await detectSandboxMode()
+    : undefined;
+
   // Render the TUI with wrapper that manages dialog state
   // Pass initialTasks for display in "ready" state and onStart callback
   root.render(
@@ -913,6 +972,8 @@ async function runWithTui(
       initialSubagentPanelVisible={persistedState.subagentPanelVisible ?? false}
       onUpdatePersistedState={handleUpdatePersistedState}
       currentModel={config.model}
+      sandboxConfig={config.sandbox}
+      resolvedSandboxMode={resolvedSandboxMode}
     />
   );
 
@@ -982,6 +1043,10 @@ async function runHeadless(
         logger.engineStarted(event.totalTasks);
         // Track when engine started for duration calculation
         engineStartTime = new Date();
+        break;
+
+      case 'engine:warning':
+        logger.warn('engine', event.message);
         break;
 
       case 'iteration:started':

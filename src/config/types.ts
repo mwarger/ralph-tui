@@ -62,6 +62,24 @@ export interface NotificationsConfig {
   sound?: NotificationSoundMode;
 }
 
+export type SandboxMode = 'auto' | 'bwrap' | 'sandbox-exec' | 'off';
+
+export interface SandboxConfig {
+  enabled?: boolean;
+  mode?: SandboxMode;
+  network?: boolean;
+  allowPaths?: string[];
+  readOnlyPaths?: string[];
+}
+
+export const DEFAULT_SANDBOX_CONFIG: Required<
+  Pick<SandboxConfig, 'enabled' | 'mode' | 'network'>
+> = {
+  enabled: false,
+  mode: 'auto',
+  network: true,
+};
+
 /**
  * Runtime options that can be passed via CLI flags
  */
@@ -116,6 +134,8 @@ export interface RuntimeOptions {
 
   /** Override notifications enabled state (--notify or --no-notify CLI flags) */
   notify?: boolean;
+
+  sandbox?: SandboxConfig;
 }
 
 /**
@@ -148,6 +168,8 @@ export interface StoredConfig {
 
   /** Error handling configuration */
   errorHandling?: Partial<ErrorHandlingConfig>;
+
+  sandbox?: SandboxConfig;
 
   /** Shorthand: agent plugin name */
   agent?: string;
@@ -228,6 +250,8 @@ export interface RalphConfig {
   /** Error handling configuration */
   errorHandling: ErrorHandlingConfig;
 
+  sandbox?: SandboxConfig;
+
   /** Custom prompt template path (resolved) */
   promptTemplate?: string;
 }
@@ -267,4 +291,5 @@ export const DEFAULT_CONFIG: Omit<RalphConfig, 'agent' | 'tracker'> = {
   progressFile: '.ralph-tui/progress.md',
   showTui: true,
   errorHandling: DEFAULT_ERROR_HANDLING,
+  sandbox: DEFAULT_SANDBOX_CONFIG,
 };

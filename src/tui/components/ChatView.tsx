@@ -10,6 +10,8 @@ import { useKeyboard } from '@opentui/react';
 import type { TextareaRenderable, KeyEvent } from '@opentui/core';
 import { colors } from '../theme.js';
 import type { ChatMessage } from '../../chat/types.js';
+import { FormattedText } from './FormattedText.js';
+import type { FormattedSegment } from '../../plugins/agents/output-formatting.js';
 
 /**
  * Spinner frames for animation
@@ -55,8 +57,11 @@ export interface ChatViewProps {
   /** Status text to show during loading */
   loadingStatus?: string;
 
-  /** Streaming output chunk (displayed during generation) */
+  /** Streaming output chunk (displayed during generation) - legacy string format */
   streamingChunk?: string;
+
+  /** Streaming output segments for TUI-native color rendering */
+  streamingSegments?: FormattedSegment[];
 
   /** Placeholder text for the input field */
   inputPlaceholder?: string;
@@ -135,6 +140,7 @@ export function ChatView({
   isLoading,
   loadingStatus = 'Thinking...',
   streamingChunk,
+  streamingSegments,
   inputPlaceholder = 'Type a message...',
   error,
   inputEnabled = true,
@@ -365,23 +371,27 @@ export function ChatView({
             <MessageBubble key={index} message={msg} />
           ))}
 
-          {/* Streaming output during generation */}
-          {isLoading && streamingChunk && (
+          {/* Streaming output during generation - prefer segments for TUI-native colors */}
+          {isLoading && (streamingSegments?.length || streamingChunk) && (
             <box style={{ flexDirection: 'column', marginBottom: 1 }}>
               <box style={{ flexDirection: 'row', gap: 1 }}>
                 <text fg={colors.accent.secondary}>Assistant</text>
                 <AnimatedSpinner />
               </box>
-              <box style={{ paddingLeft: 2 }}>
-                <text fg={colors.fg.primary}>
-                  {streamingChunk}
-                </text>
+              <box style={{ paddingLeft: 2, flexDirection: 'row', flexWrap: 'wrap' }}>
+                {streamingSegments?.length ? (
+                  <FormattedText segments={streamingSegments} />
+                ) : (
+                  <text fg={colors.fg.primary}>
+                    {streamingChunk}
+                  </text>
+                )}
               </box>
             </box>
           )}
 
           {/* Loading indicator */}
-          {isLoading && !streamingChunk && (
+          {isLoading && !streamingChunk && !streamingSegments?.length && (
             <box style={{ flexDirection: 'row', gap: 1, marginBottom: 1 }}>
               <text fg={colors.accent.secondary}>Assistant</text>
               <AnimatedSpinner />

@@ -13,8 +13,13 @@ import type {
   RalphConfig,
   RuntimeOptions,
   ConfigValidationResult,
+  SandboxConfig,
 } from './types.js';
-import { DEFAULT_CONFIG, DEFAULT_ERROR_HANDLING } from './types.js';
+import {
+  DEFAULT_CONFIG,
+  DEFAULT_ERROR_HANDLING,
+  DEFAULT_SANDBOX_CONFIG,
+} from './types.js';
 import type { ErrorHandlingConfig } from '../engine/types.js';
 import type { AgentPluginConfig } from '../plugins/agents/types.js';
 import type { TrackerPluginConfig } from '../plugins/trackers/types.js';
@@ -157,6 +162,9 @@ function mergeConfigs(global: StoredConfig, project: StoredConfig): StoredConfig
   }
   if (project.errorHandling !== undefined) {
     merged.errorHandling = { ...merged.errorHandling, ...project.errorHandling };
+  }
+  if (project.sandbox !== undefined) {
+    merged.sandbox = { ...merged.sandbox, ...project.sandbox };
   }
 
   // Override prompt template
@@ -520,6 +528,12 @@ export async function buildConfig(
     ...(options.maxRetries !== undefined ? { maxRetries: options.maxRetries } : {}),
   };
 
+  const sandbox: SandboxConfig = {
+    ...DEFAULT_SANDBOX_CONFIG,
+    ...(storedConfig.sandbox ?? {}),
+    ...(options.sandbox ?? {}),
+  };
+
   return {
     agent: agentConfig,
     tracker: trackerConfig,
@@ -539,6 +553,7 @@ export async function buildConfig(
     model: options.model,
     showTui: !options.headless,
     errorHandling,
+    sandbox,
     // CLI --prompt takes precedence over config file prompt_template
     promptTemplate: options.promptPath ?? storedConfig.prompt_template,
   };
@@ -639,7 +654,7 @@ export async function validateConfig(
 
 // Re-export types
 export type { StoredConfig, RalphConfig, RuntimeOptions, ConfigValidationResult, SubagentDetailLevel, NotificationSoundMode } from './types.js';
-export { DEFAULT_CONFIG };
+export { DEFAULT_CONFIG, DEFAULT_SANDBOX_CONFIG };
 
 // Export schema utilities
 export {

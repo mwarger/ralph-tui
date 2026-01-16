@@ -31,12 +31,13 @@ import type {
   RateLimitState,
 } from '../../engine/index.js';
 import type { TrackerTask } from '../../plugins/trackers/types.js';
-import type { StoredConfig, SubagentDetailLevel } from '../../config/types.js';
+import type { StoredConfig, SubagentDetailLevel, SandboxConfig, SandboxMode } from '../../config/types.js';
 import type { AgentPluginMeta } from '../../plugins/agents/types.js';
 import type { TrackerPluginMeta } from '../../plugins/trackers/types.js';
 import { getIterationLogsByTask } from '../../logs/index.js';
 import type { SubagentTraceStats, SubagentHierarchyNode } from '../../logs/types.js';
 import { StreamingOutputParser } from '../output-parser.js';
+import type { FormattedSegment } from '../../plugins/agents/output-formatting.js';
 
 /**
  * View modes for the RunApp component
@@ -95,6 +96,10 @@ export interface RunAppProps {
   onSubagentPanelVisibilityChange?: (visible: boolean) => void;
   /** Current model being used (provider/model format, e.g., "anthropic/claude-3-5-sonnet") */
   currentModel?: string;
+  /** Sandbox configuration for display in header */
+  sandboxConfig?: SandboxConfig;
+  /** Resolved sandbox mode (when mode is 'auto', this shows what it resolved to) */
+  resolvedSandboxMode?: Exclude<SandboxMode, 'auto'>;
 }
 
 /**
@@ -299,6 +304,8 @@ export function RunApp({
   initialSubagentPanelVisible = false,
   onSubagentPanelVisibilityChange,
   currentModel,
+  sandboxConfig,
+  resolvedSandboxMode,
 }: RunAppProps): ReactNode {
   const { width, height } = useTerminalDimensions();
   const [tasks, setTasks] = useState<TaskItem[]>(() => {
@@ -318,6 +325,7 @@ export function RunApp({
     return info.maxIterations;
   });
   const [currentOutput, setCurrentOutput] = useState('');
+  const [currentSegments, setCurrentSegments] = useState<FormattedSegment[]>([]);
   // Streaming parser for live output - extracts readable content and prevents memory bloat
   // Use agentPlugin prop (from resolved config with CLI override) with fallback to storedConfig
   const resolvedAgentName = agentPlugin || storedConfig?.defaultAgent || storedConfig?.agent || 'claude';
@@ -487,6 +495,7 @@ export function RunApp({
         case 'iteration:started':
           setCurrentIteration(event.iteration);
           setCurrentOutput('');
+          setCurrentSegments([]);
           // Reset the streaming parser for the new iteration
           outputParserRef.current.reset();
           // Clear subagent state for new iteration
@@ -584,6 +593,8 @@ export function RunApp({
             // Use streaming parser to extract readable content (filters out verbose JSONL)
             outputParserRef.current.push(event.data);
             setCurrentOutput(outputParserRef.current.getOutput());
+            // Also update segments for TUI-native color rendering
+            setCurrentSegments(outputParserRef.current.getSegments());
           }
           // Refresh subagent tree from engine (subagent events are processed in engine)
           // Only refresh if subagent tracing is enabled to avoid unnecessary work
@@ -802,12 +813,9 @@ export function RunApp({
           }
           break;
 
-        case 'c':
-          // Ctrl+C to stop
-          if (key.name === 'c') {
-            engine.stop();
-          }
-          break;
+        // Note: 'c' / Ctrl+C is intentionally NOT handled here.
+        // Ctrl+C and Ctrl+Shift+C send the same sequence (\x03) in most terminals,
+        // so we can't distinguish between "stop" and "copy". Users should use 'q' to quit.
 
         case 'v':
           // Toggle between tasks and iterations view (only if not in detail view)
@@ -995,7 +1003,7 @@ export function RunApp({
   const selectedTask = displayedTasks[selectedIndex] ?? null;
 
   // Compute the iteration output and timing to show for the selected task
-  // - If selected task is currently executing: show live currentOutput with isRunning
+  // - If selected task is currently executing: show live currentOutput with isRunning + segments
   // - If selected task has a completed iteration: show that iteration's output with timing
   // - Otherwise: undefined (will show "waiting" or appropriate message)
   const selectedTaskIteration = useMemo(() => {
@@ -1007,9 +1015,9 @@ export function RunApp({
           startedAt: currentIterationStartedAt,
           isRunning: true,
         };
-        return { iteration: currentIteration, output: currentOutput, timing };
+        return { iteration: currentIteration, output: currentOutput, segments: currentSegments, timing };
       }
-      return { iteration: currentIteration, output: undefined, timing: undefined };
+      return { iteration: currentIteration, output: undefined, segments: undefined, timing: undefined };
     }
 
     // Check if this task is currently being executed
@@ -1021,7 +1029,7 @@ export function RunApp({
         startedAt: currentIterationStartedAt,
         isRunning: true,
       };
-      return { iteration: currentIteration, output: currentOutput, timing };
+      return { iteration: currentIteration, output: currentOutput, segments: currentSegments, timing };
     }
 
     // Look for a completed iteration for this task (in-memory from current session)
@@ -1036,6 +1044,7 @@ export function RunApp({
       return {
         iteration: taskIteration.iteration,
         output: taskIteration.agentResult?.stdout ?? '',
+        segments: undefined, // Completed iterations don't have live segments
         timing,
       };
     }
@@ -1046,13 +1055,14 @@ export function RunApp({
       return {
         iteration: -1, // Historical iteration number unknown, use -1 to indicate "past"
         output: historicalData.output,
+        segments: undefined, // Historical data doesn't have segments
         timing: historicalData.timing,
       };
     }
 
     // Task hasn't been run yet (or historical log not yet loaded)
-    return { iteration: 0, output: undefined, timing: undefined };
-  }, [selectedTask, currentTaskId, currentIteration, currentOutput, iterations, historicalOutputCache]);
+    return { iteration: 0, output: undefined, segments: undefined, timing: undefined };
+  }, [selectedTask, currentTaskId, currentIteration, currentOutput, currentSegments, iterations, historicalOutputCache]);
 
   // Load historical iteration logs from disk when a completed task is selected
   useEffect(() => {
@@ -1191,6 +1201,8 @@ export function RunApp({
         currentIteration={currentIteration}
         maxIterations={maxIterations}
         currentModel={currentModel}
+        sandboxConfig={sandboxConfig}
+        resolvedSandboxMode={resolvedSandboxMode}
       />
 
       {/* Progress Dashboard - toggleable with 'd' key */}
@@ -1203,6 +1215,8 @@ export function RunApp({
           epicName={epicName}
           currentTaskId={currentTaskId}
           currentTaskTitle={currentTaskTitle}
+          sandboxConfig={sandboxConfig}
+          resolvedSandboxMode={resolvedSandboxMode}
         />
       )}
 
@@ -1226,6 +1240,8 @@ export function RunApp({
             subagentTree={iterationDetailSubagentTree}
             subagentStats={iterationDetailSubagentStats}
             subagentTraceLoading={iterationDetailSubagentLoading}
+            sandboxConfig={sandboxConfig}
+            resolvedSandboxMode={resolvedSandboxMode}
           />
         ) : viewMode === 'tasks' ? (
           <>
@@ -1234,6 +1250,7 @@ export function RunApp({
               selectedTask={selectedTask}
               currentIteration={selectedTaskIteration.iteration}
               iterationOutput={selectedTaskIteration.output}
+              iterationSegments={selectedTaskIteration.segments}
               viewMode={detailsViewMode}
               iterationTiming={selectedTaskIteration.timing}
               agentName={displayAgentName}
@@ -1267,6 +1284,7 @@ export function RunApp({
               selectedTask={selectedTask}
               currentIteration={selectedTaskIteration.iteration}
               iterationOutput={selectedTaskIteration.output}
+              iterationSegments={selectedTaskIteration.segments}
               viewMode={detailsViewMode}
               iterationTiming={selectedTaskIteration.timing}
               agentName={displayAgentName}

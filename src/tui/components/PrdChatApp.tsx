@@ -16,6 +16,7 @@ import { ConfirmationDialog } from './ConfirmationDialog.js';
 import { ChatEngine, createPrdChatEngine, createTaskChatEngine, slugify } from '../../chat/engine.js';
 import type { ChatMessage, ChatEvent } from '../../chat/types.js';
 import type { AgentPlugin } from '../../plugins/agents/types.js';
+import type { FormattedSegment } from '../../plugins/agents/output-formatting.js';
 import { parsePrdMarkdown } from '../../prd/index.js';
 import { colors } from '../theme.js';
 
@@ -207,6 +208,7 @@ export function PrdChatApp({
   const [isLoading, setIsLoading] = useState(false);
   const [loadingStatus, setLoadingStatus] = useState('');
   const [streamingChunk, setStreamingChunk] = useState('');
+  const [streamingSegments, setStreamingSegments] = useState<FormattedSegment[]>([]);
   const [error, setError] = useState<string | undefined>();
 
   // Quit confirmation dialog state
@@ -343,6 +345,7 @@ Press a number key to select, or continue chatting.`,
 
       setIsLoading(true);
       setStreamingChunk('');
+      setStreamingSegments([]);
       setLoadingStatus(`Creating ${option.name} tasks...`);
 
       // Add user selection message
@@ -361,9 +364,9 @@ Read the PRD and create the appropriate tasks.`;
 
       try {
         const result = await taskEngineRef.current.sendMessage(prompt, {
-          onChunk: (chunk) => {
+          onSegments: (segments) => {
             if (isMountedRef.current) {
-              setStreamingChunk((prev) => prev + chunk);
+              setStreamingSegments((prev) => [...prev, ...segments]);
             }
           },
           onStatus: (status) => {
@@ -377,6 +380,7 @@ Read the PRD and create the appropriate tasks.`;
           if (result.success && result.response) {
             setMessages((prev) => [...prev, result.response!]);
             setStreamingChunk('');
+            setStreamingSegments([]);
 
             // Add completion message and finish
             const doneMsg: ChatMessage = {
@@ -417,6 +421,7 @@ Read the PRD and create the appropriate tasks.`;
       setInputValue('');
       setIsLoading(true);
       setStreamingChunk('');
+      setStreamingSegments([]);
       setLoadingStatus('Sending to agent...');
       setError(undefined);
 
@@ -429,9 +434,9 @@ Read the PRD and create the appropriate tasks.`;
 
     try {
       const result = await engineRef.current.sendMessage(userMessage, {
-        onChunk: (chunk) => {
+        onSegments: (segments) => {
           if (isMountedRef.current) {
-            setStreamingChunk((prev) => prev + chunk);
+            setStreamingSegments((prev) => [...prev, ...segments]);
           }
         },
         onStatus: (status) => {
@@ -445,6 +450,7 @@ Read the PRD and create the appropriate tasks.`;
         if (result.success && result.response) {
           setMessages((prev) => [...prev, result.response!]);
           setStreamingChunk('');
+          setStreamingSegments([]);
         } else if (!result.success) {
           setError(result.error || 'Failed to get response');
         }
@@ -547,6 +553,7 @@ Read the PRD and create the appropriate tasks.`;
             isLoading={isLoading}
             loadingStatus={loadingStatus}
             streamingChunk={streamingChunk}
+            streamingSegments={streamingSegments}
             inputPlaceholder="Ask questions or select a format..."
             error={error}
             inputEnabled={!isLoading}
@@ -575,6 +582,7 @@ Read the PRD and create the appropriate tasks.`;
         isLoading={isLoading}
         loadingStatus={loadingStatus}
         streamingChunk={streamingChunk}
+        streamingSegments={streamingSegments}
         inputPlaceholder="Describe your feature..."
         error={error}
         inputEnabled={!isLoading && !showQuitConfirm}
