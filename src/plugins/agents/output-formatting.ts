@@ -323,7 +323,10 @@ export function processAgentEvents(events: AgentDisplayEvent[]): string {
     switch (event.type) {
       case 'text':
         if (event.content) {
-          parts.push(event.content);
+          // Ensure text ends with newline so streaming parser treats it as a complete line
+          // Otherwise text gets buffered and concatenated with the next chunk (e.g., tool call)
+          const text = event.content.endsWith('\n') ? event.content : event.content + '\n';
+          parts.push(text);
         }
         break;
 
@@ -372,7 +375,9 @@ export function processAgentEventsToSegments(events: AgentDisplayEvent[]): Forma
     switch (event.type) {
       case 'text':
         if (event.content) {
-          segments.push({ text: event.content });
+          // Ensure text ends with newline so streaming parser treats it as a complete line
+          const text = event.content.endsWith('\n') ? event.content : event.content + '\n';
+          segments.push({ text });
         }
         break;
 
