@@ -62,7 +62,7 @@ export interface NotificationsConfig {
   sound?: NotificationSoundMode;
 }
 
-export type SandboxMode = 'auto' | 'bwrap' | 'off';
+export type SandboxMode = 'auto' | 'bwrap' | 'sandbox-exec' | 'off';
 
 export interface SandboxConfig {
   enabled?: boolean;

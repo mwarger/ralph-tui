@@ -15,7 +15,7 @@ export const SubagentDetailLevelSchema = z.enum(['off', 'minimal', 'moderate', '
  */
 export const ErrorHandlingStrategySchema = z.enum(['retry', 'skip', 'abort']);
 
-export const SandboxModeSchema = z.enum(['auto', 'bwrap', 'off']);
+export const SandboxModeSchema = z.enum(['auto', 'bwrap', 'sandbox-exec', 'off']);
 
 /**
  * Error handling configuration schema

@@ -52,8 +52,12 @@ export async function detectSandboxMode(): Promise<Exclude<SandboxMode, 'auto'>>
     return 'bwrap';
   }
 
+  // sandbox-exec is built-in on macOS (darwin)
+  if (os === 'darwin' && (await commandExists('sandbox-exec'))) {
+    return 'sandbox-exec';
+  }
+
   // No sandbox available on this platform
-  // macOS sandbox-exec support will be added separately
   // Windows users should use WSL with bwrap
   return 'off';
 }
