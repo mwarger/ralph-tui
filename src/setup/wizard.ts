@@ -33,6 +33,7 @@ import {
   installSkill,
   isSkillInstalled,
 } from './skill-installer.js';
+import { CURRENT_CONFIG_VERSION } from './migration.js';
 
 /**
  * Config directory and filename
@@ -171,6 +172,8 @@ async function saveConfig(
 
   // Build StoredConfig from answers
   const config: StoredConfig = {
+    // Config version for future migrations
+    configVersion: CURRENT_CONFIG_VERSION,
     // Use shorthand format for simpler config
     tracker: answers.tracker,
     trackerOptions: answers.trackerOptions,

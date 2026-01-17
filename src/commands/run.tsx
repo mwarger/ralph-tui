@@ -48,7 +48,7 @@ import { EpicSelectionApp } from '../tui/components/EpicSelectionApp.js';
 import type { TrackerPlugin, TrackerTask } from '../plugins/trackers/types.js';
 import { BeadsTrackerPlugin } from '../plugins/trackers/builtin/beads/index.js';
 import type { RalphConfig } from '../config/types.js';
-import { projectConfigExists, runSetupWizard } from '../setup/index.js';
+import { projectConfigExists, runSetupWizard, checkAndMigrate } from '../setup/index.js';
 import { createInterruptHandler } from '../interruption/index.js';
 import type { InterruptHandler } from '../interruption/types.js';
 import { createStructuredLogger, clearProgress } from '../logs/index.js';
@@ -1328,6 +1328,14 @@ export async function executeRunCommand(args: string[]): Promise<void> {
     console.log('');
   } else if (!configExists && options.noSetup) {
     console.log('No .ralph-tui/config.toml found. Using default configuration.');
+  }
+
+  // Check for config migrations (auto-upgrade on version changes)
+  if (configExists) {
+    const migrationResult = await checkAndMigrate(cwd, { quiet: false });
+    if (migrationResult?.error) {
+      console.warn(`Warning: Config migration failed: ${migrationResult.error}`);
+    }
   }
 
   console.log('Initializing Ralph TUI...');
