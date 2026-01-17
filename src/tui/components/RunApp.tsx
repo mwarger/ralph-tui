@@ -877,7 +877,17 @@ export function RunApp({
         case 'up':
         case 'k':
           if (viewMode === 'tasks') {
-            setSelectedIndex((prev) => Math.max(0, prev - 1));
+            setSelectedIndex((prev) => {
+              const newIndex = Math.max(0, prev - 1);
+              // If in prompt view and index changed, regenerate prompt for the new task
+              if (detailsViewMode === 'prompt' && newIndex !== prev) {
+                const newTaskId = displayedTasks[newIndex]?.id;
+                if (newTaskId) {
+                  void generatePromptPreview(newTaskId);
+                }
+              }
+              return newIndex;
+            });
           } else if (viewMode === 'iterations') {
             setIterationSelectedIndex((prev) => Math.max(0, prev - 1));
           }
@@ -886,7 +896,17 @@ export function RunApp({
         case 'down':
         case 'j':
           if (viewMode === 'tasks') {
-            setSelectedIndex((prev) => Math.min(displayedTasks.length - 1, prev + 1));
+            setSelectedIndex((prev) => {
+              const newIndex = Math.min(displayedTasks.length - 1, prev + 1);
+              // If in prompt view and index changed, regenerate prompt for the new task
+              if (detailsViewMode === 'prompt' && newIndex !== prev) {
+                const newTaskId = displayedTasks[newIndex]?.id;
+                if (newTaskId) {
+                  void generatePromptPreview(newTaskId);
+                }
+              }
+              return newIndex;
+            });
           } else if (viewMode === 'iterations') {
             setIterationSelectedIndex((prev) => Math.min(iterationHistoryLength - 1, prev + 1));
           }

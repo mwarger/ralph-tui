@@ -9,25 +9,11 @@
 
 {{!-- Full PRD for project context (agent studies this first) --}}
 {{#if prdContent}}
-## PRD: {{prdName}}
-{{#if prdDescription}}
-{{prdDescription}}
-{{/if}}
-
-### Progress: {{prdCompletedCount}}/{{prdTotalCount}} stories complete
-
-<details>
-<summary>Full PRD Document (click to expand)</summary>
+We are working in a project to implement the following Product Requirements Document (PRD):
 
 {{prdContent}}
 
-</details>
-{{/if}}
-
-{{!-- Learnings from previous iterations (patterns first) --}}
-{{#if codebasePatterns}}
-## Codebase Patterns (Study These First)
-{{codebasePatterns}}
+---
 {{/if}}
 
 {{!-- Task details --}}
