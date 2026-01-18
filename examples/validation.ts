@@ -1,47 +1,65 @@
 /**
- * ABOUTME: Input validation utilities for common data formats.
- * Provides simple boolean validation functions for emails, URLs, and numeric strings.
+ * ABOUTME: Simple validation utilities for demonstration purposes.
+ * Provides basic validators: isEmail, isURL, and isNumeric.
  */
 
 /**
- * Validates whether a string is a valid email address.
- * Uses a standard regex pattern that covers most common email formats.
+ * Checks if a string is a valid email address format.
+ * Uses a simple pattern that validates most common email formats.
  *
- * @param s - The string to validate
- * @returns True if the string is a valid email address, false otherwise
+ * @param str - The string to validate
+ * @returns True if the string is a valid email format, false otherwise
+ * @example
+ * isEmail('user@example.com') // returns true
+ * isEmail('invalid') // returns false
  */
-export function isEmail(s: string): boolean {
-  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-  return emailRegex.test(s);
+export function isEmail(str: string): boolean {
+  if (str.length === 0) {
+    return false;
+  }
+  const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  return EMAIL_PATTERN.test(str);
 }
 
 /**
- * Validates whether a string is a valid URL.
- * Accepts http and https protocols with standard URL formatting.
+ * Checks if a string is a valid URL.
+ * Accepts any URL with a valid protocol (http, https, ftp, etc.).
  *
- * @param s - The string to validate
+ * @param str - The string to validate
  * @returns True if the string is a valid URL, false otherwise
+ * @example
+ * isURL('https://example.com') // returns true
+ * isURL('example.com') // returns false (missing protocol)
  */
-export function isUrl(s: string): boolean {
+export function isURL(str: string): boolean {
+  if (str.length === 0) {
+    return false;
+  }
   try {
-    const url = new URL(s);
-    return url.protocol === "http:" || url.protocol === "https:";
+    new URL(str);
+    return true;
   } catch {
     return false;
   }
 }
 
 /**
- * Validates whether a string represents a numeric value.
- * Accepts integers, decimals, and negative numbers.
- * Does not accept empty strings, whitespace-only strings, or NaN results.
+ * Checks if a string represents a numeric value.
+ * Accepts integers and decimals, including negative numbers.
+ * Does not accept scientific notation, leading/trailing whitespace,
+ * or special values like Infinity or NaN.
  *
- * @param s - The string to validate
- * @returns True if the string is numeric, false otherwise
+ * @param str - The string to validate
+ * @returns True if the string is a valid numeric format, false otherwise
+ * @example
+ * isNumeric('42') // returns true
+ * isNumeric('-3.14') // returns true
+ * isNumeric('abc') // returns false
  */
-export function isNumeric(s: string): boolean {
-  if (s.trim() === "") {
+export function isNumeric(str: string): boolean {
+  if (str.length === 0) {
     return false;
   }
-  return !isNaN(Number(s)) && isFinite(Number(s));
+  const NUMERIC_PATTERN = /^-?\d+(\.\d+)?$/;
+  return NUMERIC_PATTERN.test(str);
 }
