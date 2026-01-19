@@ -28,8 +28,8 @@ import type {
   PushConfigMessage,
   PushConfigResponseMessage,
   RemoteEngineState,
-} from './types.js';
-import { TOKEN_LIFETIMES, DEFAULT_LISTEN_OPTIONS } from './types.js';
+} from '../../src/remote/types.js';
+import { TOKEN_LIFETIMES, DEFAULT_LISTEN_OPTIONS } from '../../src/remote/types.js';
 
 // ============================================================================
 // Types and Constants Tests
@@ -179,7 +179,7 @@ describe('RemoteClient', () => {
 
   describe('Connection', () => {
     test('creates WebSocket with correct URL', async () => {
-      const { RemoteClient } = await import('./client.js');
+      const { RemoteClient } = await import('../../src/remote/client.js');
 
       const events: unknown[] = [];
       const client = new RemoteClient('localhost', 7890, 'test-token', (event) => {
@@ -222,7 +222,7 @@ describe('RemoteClient', () => {
     });
 
     test('handles authentication failure', async () => {
-      const { RemoteClient } = await import('./client.js');
+      const { RemoteClient } = await import('../../src/remote/client.js');
 
       const events: unknown[] = [];
       const client = new RemoteClient('localhost', 7890, 'bad-token', (event) => {
@@ -253,7 +253,7 @@ describe('RemoteClient', () => {
     });
 
     test('handles ping/pong for heartbeat', async () => {
-      const { RemoteClient } = await import('./client.js');
+      const { RemoteClient } = await import('../../src/remote/client.js');
 
       const events: unknown[] = [];
       const client = new RemoteClient('localhost', 7890, 'test-token', (event) => {
@@ -297,7 +297,7 @@ describe('RemoteClient', () => {
 
   describe('Disconnect', () => {
     test('intentional disconnect does not trigger reconnect', async () => {
-      const { RemoteClient } = await import('./client.js');
+      const { RemoteClient } = await import('../../src/remote/client.js');
 
       const events: unknown[] = [];
       const client = new RemoteClient('localhost', 7890, 'test-token', (event) => {
@@ -548,7 +548,7 @@ agent = "claude
 describe('InstanceManager', () => {
   describe('Tab Management', () => {
     test('createLocalTab returns correct structure', async () => {
-      const { createLocalTab } = await import('./client.js');
+      const { createLocalTab } = await import('../../src/remote/client.js');
 
       const tab = createLocalTab();
 
@@ -559,7 +559,7 @@ describe('InstanceManager', () => {
     });
 
     test('createRemoteTab returns correct structure', async () => {
-      const { createRemoteTab } = await import('./client.js');
+      const { createRemoteTab } = await import('../../src/remote/client.js');
 
       const tab = createRemoteTab('prod', 'server.example.com', 7890);
 
@@ -575,7 +575,7 @@ describe('InstanceManager', () => {
 
   describe('Connection Metrics', () => {
     test('metrics structure is correct', async () => {
-      const { DEFAULT_RECONNECT_CONFIG } = await import('./client.js');
+      const { DEFAULT_RECONNECT_CONFIG } = await import('../../src/remote/client.js');
 
       expect(DEFAULT_RECONNECT_CONFIG.initialDelayMs).toBe(1000);
       expect(DEFAULT_RECONNECT_CONFIG.maxDelayMs).toBe(30000);
@@ -587,7 +587,7 @@ describe('InstanceManager', () => {
 
   describe('Remote Management Methods', () => {
     test('getTabIndexByAlias returns -1 for non-existent alias', async () => {
-      const { InstanceManager } = await import('./instance-manager.js');
+      const { InstanceManager } = await import('../../src/remote/instance-manager.js');
       const manager = new InstanceManager();
 
       // Initialize with local tab only
@@ -598,7 +598,7 @@ describe('InstanceManager', () => {
     });
 
     test('getTabIndexByAlias returns correct index for existing alias', async () => {
-      const { InstanceManager } = await import('./instance-manager.js');
+      const { InstanceManager } = await import('../../src/remote/instance-manager.js');
       const manager = new InstanceManager();
 
       // Initialize and manually add a tab for testing
@@ -611,7 +611,7 @@ describe('InstanceManager', () => {
     });
 
     test('disconnectRemote handles non-existent alias gracefully', async () => {
-      const { InstanceManager } = await import('./instance-manager.js');
+      const { InstanceManager } = await import('../../src/remote/instance-manager.js');
       const manager = new InstanceManager();
 
       await manager.initialize();
@@ -621,7 +621,7 @@ describe('InstanceManager', () => {
     });
 
     test('removeTab handles non-existent alias gracefully', async () => {
-      const { InstanceManager } = await import('./instance-manager.js');
+      const { InstanceManager } = await import('../../src/remote/instance-manager.js');
       const manager = new InstanceManager();
 
       await manager.initialize();
@@ -635,7 +635,7 @@ describe('InstanceManager', () => {
     });
 
     test('removeTab does not remove local tab', async () => {
-      const { InstanceManager } = await import('./instance-manager.js');
+      const { InstanceManager } = await import('../../src/remote/instance-manager.js');
       const manager = new InstanceManager();
 
       await manager.initialize();
@@ -653,7 +653,7 @@ describe('InstanceManager', () => {
     });
 
     test('getTabs returns tabs array', async () => {
-      const { InstanceManager } = await import('./instance-manager.js');
+      const { InstanceManager } = await import('../../src/remote/instance-manager.js');
       const manager = new InstanceManager();
 
       await manager.initialize();
@@ -665,7 +665,7 @@ describe('InstanceManager', () => {
     });
 
     test('getSelectedIndex returns valid index', async () => {
-      const { InstanceManager } = await import('./instance-manager.js');
+      const { InstanceManager } = await import('../../src/remote/instance-manager.js');
       const manager = new InstanceManager();
 
       await manager.initialize();
@@ -676,7 +676,7 @@ describe('InstanceManager', () => {
     });
 
     test('onStateChange callback is called on state changes', async () => {
-      const { InstanceManager } = await import('./instance-manager.js');
+      const { InstanceManager } = await import('../../src/remote/instance-manager.js');
       const manager = new InstanceManager();
 
       let callCount = 0;
@@ -698,7 +698,7 @@ describe('InstanceManager', () => {
     });
 
     test('onToast callback is registered', async () => {
-      const { InstanceManager } = await import('./instance-manager.js');
+      const { InstanceManager } = await import('../../src/remote/instance-manager.js');
       const manager = new InstanceManager();
 
       let toastReceived = false;
@@ -711,7 +711,7 @@ describe('InstanceManager', () => {
     });
 
     test('disconnectAll handles empty clients map', async () => {
-      const { InstanceManager } = await import('./instance-manager.js');
+      const { InstanceManager } = await import('../../src/remote/instance-manager.js');
       const manager = new InstanceManager();
 
       await manager.initialize();
@@ -721,7 +721,7 @@ describe('InstanceManager', () => {
     });
 
     test('selectTab validates index bounds', async () => {
-      const { InstanceManager } = await import('./instance-manager.js');
+      const { InstanceManager } = await import('../../src/remote/instance-manager.js');
       const manager = new InstanceManager();
 
       await manager.initialize();
@@ -732,7 +732,7 @@ describe('InstanceManager', () => {
     });
 
     test('getClientByAlias returns null for non-existent alias', async () => {
-      const { InstanceManager } = await import('./instance-manager.js');
+      const { InstanceManager } = await import('../../src/remote/instance-manager.js');
       const manager = new InstanceManager();
 
       await manager.initialize();
@@ -742,7 +742,7 @@ describe('InstanceManager', () => {
     });
 
     test('getSelectedClient returns null when local tab selected', async () => {
-      const { InstanceManager } = await import('./instance-manager.js');
+      const { InstanceManager } = await import('../../src/remote/instance-manager.js');
       const manager = new InstanceManager();
 
       await manager.initialize();
@@ -753,7 +753,7 @@ describe('InstanceManager', () => {
     });
 
     test('isViewingRemote returns false when local tab selected', async () => {
-      const { InstanceManager } = await import('./instance-manager.js');
+      const { InstanceManager } = await import('../../src/remote/instance-manager.js');
       const manager = new InstanceManager();
 
       await manager.initialize();
@@ -763,7 +763,7 @@ describe('InstanceManager', () => {
     });
 
     test('getSelectedTab returns local tab when selected', async () => {
-      const { InstanceManager } = await import('./instance-manager.js');
+      const { InstanceManager } = await import('../../src/remote/instance-manager.js');
       const manager = new InstanceManager();
 
       await manager.initialize();
@@ -807,7 +807,7 @@ describe('InstanceManager', () => {
     });
 
     test('addAndConnectRemote creates tab and attempts connection', async () => {
-      const { InstanceManager } = await import('./instance-manager.js');
+      const { InstanceManager } = await import('../../src/remote/instance-manager.js');
       const manager = new InstanceManager();
 
       await manager.initialize();
@@ -845,7 +845,7 @@ describe('InstanceManager', () => {
     });
 
     test('removeTab disconnects and removes tab', async () => {
-      const { InstanceManager } = await import('./instance-manager.js');
+      const { InstanceManager } = await import('../../src/remote/instance-manager.js');
       const manager = new InstanceManager();
 
       await manager.initialize();
@@ -880,7 +880,7 @@ describe('InstanceManager', () => {
     });
 
     test('disconnectRemote updates tab status', async () => {
-      const { InstanceManager } = await import('./instance-manager.js');
+      const { InstanceManager } = await import('../../src/remote/instance-manager.js');
       const manager = new InstanceManager();
 
       await manager.initialize();
@@ -910,7 +910,7 @@ describe('InstanceManager', () => {
     });
 
     test('reconnectRemote updates tab info and reconnects', async () => {
-      const { InstanceManager } = await import('./instance-manager.js');
+      const { InstanceManager } = await import('../../src/remote/instance-manager.js');
       const manager = new InstanceManager();
 
       await manager.initialize();
@@ -939,7 +939,7 @@ describe('InstanceManager', () => {
     });
 
     test('getTabIndexByAlias returns correct index after adding remote', async () => {
-      const { InstanceManager } = await import('./instance-manager.js');
+      const { InstanceManager } = await import('../../src/remote/instance-manager.js');
       const manager = new InstanceManager();
 
       await manager.initialize();
@@ -956,7 +956,7 @@ describe('InstanceManager', () => {
     });
 
     test('selectNextTab cycles through tabs', async () => {
-      const { InstanceManager } = await import('./instance-manager.js');
+      const { InstanceManager } = await import('../../src/remote/instance-manager.js');
       const manager = new InstanceManager();
 
       await manager.initialize();
@@ -972,7 +972,7 @@ describe('InstanceManager', () => {
     });
 
     test('selectPreviousTab cycles through tabs', async () => {
-      const { InstanceManager } = await import('./instance-manager.js');
+      const { InstanceManager } = await import('../../src/remote/instance-manager.js');
       const manager = new InstanceManager();
 
       await manager.initialize();
@@ -988,7 +988,7 @@ describe('InstanceManager', () => {
     });
 
     test('refresh does not throw', async () => {
-      const { InstanceManager } = await import('./instance-manager.js');
+      const { InstanceManager } = await import('../../src/remote/instance-manager.js');
       const manager = new InstanceManager();
 
       await manager.initialize();
@@ -1004,7 +1004,7 @@ describe('InstanceManager', () => {
     });
 
     test('selectTab ignores out-of-bounds index', async () => {
-      const { InstanceManager } = await import('./instance-manager.js');
+      const { InstanceManager } = await import('../../src/remote/instance-manager.js');
       const manager = new InstanceManager();
 
       await manager.initialize();
@@ -1019,7 +1019,7 @@ describe('InstanceManager', () => {
     });
 
     test('selectTab notifies state change', async () => {
-      const { InstanceManager } = await import('./instance-manager.js');
+      const { InstanceManager } = await import('../../src/remote/instance-manager.js');
       const manager = new InstanceManager();
 
       let stateChangeCalled = false;
@@ -1035,7 +1035,7 @@ describe('InstanceManager', () => {
     });
 
     test('addAndConnectRemote adds tab synchronously', async () => {
-      const { InstanceManager } = await import('./instance-manager.js');
+      const { InstanceManager } = await import('../../src/remote/instance-manager.js');
       const manager = new InstanceManager();
 
       await manager.initialize();
@@ -1054,7 +1054,7 @@ describe('InstanceManager', () => {
     });
 
     test('notifyStateChange calls handler with current state', async () => {
-      const { InstanceManager } = await import('./instance-manager.js');
+      const { InstanceManager } = await import('../../src/remote/instance-manager.js');
       const manager = new InstanceManager();
 
       let receivedTabs: unknown[] = [];
@@ -1072,7 +1072,7 @@ describe('InstanceManager', () => {
     });
 
     test('removeTab decreases tab count', async () => {
-      const { InstanceManager } = await import('./instance-manager.js');
+      const { InstanceManager } = await import('../../src/remote/instance-manager.js');
       const manager = new InstanceManager();
 
       await manager.initialize();
@@ -1088,7 +1088,7 @@ describe('InstanceManager', () => {
     });
 
     test('removeTab removes correct tab by alias', async () => {
-      const { InstanceManager } = await import('./instance-manager.js');
+      const { InstanceManager } = await import('../../src/remote/instance-manager.js');
       const manager = new InstanceManager();
 
       await manager.initialize();
@@ -1107,7 +1107,7 @@ describe('InstanceManager', () => {
     });
 
     test('reconnectRemote updates host and port', async () => {
-      const { InstanceManager } = await import('./instance-manager.js');
+      const { InstanceManager } = await import('../../src/remote/instance-manager.js');
       const manager = new InstanceManager();
 
       await manager.initialize();
@@ -1129,7 +1129,7 @@ describe('InstanceManager', () => {
     });
 
     test('emitToast calls toast handler', async () => {
-      const { InstanceManager } = await import('./instance-manager.js');
+      const { InstanceManager } = await import('../../src/remote/instance-manager.js');
       const manager = new InstanceManager();
 
       const toasts: unknown[] = [];
@@ -1154,7 +1154,7 @@ describe('InstanceManager', () => {
     });
 
     test('getTabIndexByAlias with multiple remotes', async () => {
-      const { InstanceManager } = await import('./instance-manager.js');
+      const { InstanceManager } = await import('../../src/remote/instance-manager.js');
       const manager = new InstanceManager();
 
       await manager.initialize();
@@ -1175,7 +1175,7 @@ describe('InstanceManager', () => {
     });
 
     test('disconnectRemote with non-existent alias does nothing', async () => {
-      const { InstanceManager } = await import('./instance-manager.js');
+      const { InstanceManager } = await import('../../src/remote/instance-manager.js');
       const manager = new InstanceManager();
 
       await manager.initialize();
@@ -1188,7 +1188,7 @@ describe('InstanceManager', () => {
     });
 
     test('state change handler is replaced on second registration', async () => {
-      const { InstanceManager } = await import('./instance-manager.js');
+      const { InstanceManager } = await import('../../src/remote/instance-manager.js');
       const manager = new InstanceManager();
 
       let handler1CallCount = 0;
@@ -1205,7 +1205,7 @@ describe('InstanceManager', () => {
     });
 
     test('getClientByAlias returns null for local tab', async () => {
-      const { InstanceManager } = await import('./instance-manager.js');
+      const { InstanceManager } = await import('../../src/remote/instance-manager.js');
       const manager = new InstanceManager();
 
       await manager.initialize();
@@ -1333,7 +1333,7 @@ describe('Remote Config Integration', () => {
 describe('Remote CLI Commands', () => {
   describe('parseRemoteArgs', () => {
     test('parses push-config command correctly', async () => {
-      const { parseRemoteArgs } = await import('../commands/remote.js');
+      const { parseRemoteArgs } = await import('../../src/commands/remote.js');
 
       const args = ['push-config', 'prod', '--scope', 'global', '--preview', '--force'];
       const options = parseRemoteArgs(args);
@@ -1346,7 +1346,7 @@ describe('Remote CLI Commands', () => {
     });
 
     test('parses push-config --all correctly', async () => {
-      const { parseRemoteArgs } = await import('../commands/remote.js');
+      const { parseRemoteArgs } = await import('../../src/commands/remote.js');
 
       const args = ['push-config', '--all', '--force'];
       const options = parseRemoteArgs(args);
@@ -1357,7 +1357,7 @@ describe('Remote CLI Commands', () => {
     });
 
     test('parses scope option correctly', async () => {
-      const { parseRemoteArgs } = await import('../commands/remote.js');
+      const { parseRemoteArgs } = await import('../../src/commands/remote.js');
 
       const globalArgs = ['push-config', 'test', '--scope', 'global'];
       const globalOptions = parseRemoteArgs(globalArgs);
@@ -1369,7 +1369,7 @@ describe('Remote CLI Commands', () => {
     });
 
     test('ignores invalid scope values', async () => {
-      const { parseRemoteArgs } = await import('../commands/remote.js');
+      const { parseRemoteArgs } = await import('../../src/commands/remote.js');
 
       const args = ['push-config', 'test', '--scope', 'invalid'];
       const options = parseRemoteArgs(args);
