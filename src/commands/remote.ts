@@ -94,13 +94,37 @@ async function testRemoteConnection(
   const startTime = Date.now();
 
   return new Promise((resolve) => {
+    let ws: WebSocket | null = null;
+    let settled = false;
+    let timeout: ReturnType<typeof setTimeout> | null = null;
+
+    // Helper to clean up and resolve only once
+    const settleWith = (result: { connected: boolean; error?: string; latencyMs?: number }): void => {
+      if (settled) return;
+      settled = true;
+      if (timeout) clearTimeout(timeout);
+      if (ws) {
+        // Clear handlers to prevent further callbacks
+        ws.onopen = null;
+        ws.onmessage = null;
+        ws.onerror = null;
+        ws.onclose = null;
+        try {
+          ws.close();
+        } catch {
+          // Ignore close errors
+        }
+      }
+      resolve(result);
+    };
+
     // Set a timeout for the connection attempt
-    const timeout = setTimeout(() => {
-      resolve({ connected: false, error: 'Connection timed out (5s)' });
+    timeout = setTimeout(() => {
+      settleWith({ connected: false, error: 'Connection timed out (5s)' });
     }, 5000);
 
     try {
-      const ws = new WebSocket(`ws://${host}:${port}`);
+      ws = new WebSocket(`ws://${host}:${port}`);
 
       ws.onopen = () => {
         // Send auth message
@@ -110,46 +134,40 @@ async function testRemoteConnection(
           timestamp: new Date().toISOString(),
           token,
         };
-        ws.send(JSON.stringify(authMsg));
+        ws!.send(JSON.stringify(authMsg));
       };
 
       ws.onmessage = (event) => {
         const latencyMs = Date.now() - startTime;
-        clearTimeout(timeout);
 
         try {
           const msg = JSON.parse(event.data as string) as { type: string; success?: boolean; error?: string };
 
           if (msg.type === 'auth_response') {
             if (msg.success) {
-              resolve({ connected: true, latencyMs });
+              settleWith({ connected: true, latencyMs });
             } else {
-              resolve({ connected: false, error: msg.error ?? 'Authentication failed' });
+              settleWith({ connected: false, error: msg.error ?? 'Authentication failed' });
             }
           } else {
-            resolve({ connected: false, error: `Unexpected response: ${msg.type}` });
+            settleWith({ connected: false, error: `Unexpected response: ${msg.type}` });
           }
         } catch {
-          resolve({ connected: false, error: 'Invalid response from server' });
+          settleWith({ connected: false, error: 'Invalid response from server' });
         }
-
-        ws.close();
       };
 
       ws.onerror = () => {
-        clearTimeout(timeout);
-        resolve({ connected: false, error: 'Connection failed' });
+        settleWith({ connected: false, error: 'Connection failed' });
       };
 
       ws.onclose = (event) => {
-        clearTimeout(timeout);
         if (!event.wasClean && event.code !== 1000) {
-          resolve({ connected: false, error: `Connection closed: ${event.reason || 'Unknown error'}` });
+          settleWith({ connected: false, error: `Connection closed: ${event.reason || 'Unknown error'}` });
         }
       };
     } catch (err) {
-      clearTimeout(timeout);
-      resolve({ connected: false, error: err instanceof Error ? err.message : 'Connection failed' });
+      settleWith({ connected: false, error: err instanceof Error ? err.message : 'Connection failed' });
     }
   });
 }

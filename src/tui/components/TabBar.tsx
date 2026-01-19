@@ -18,12 +18,6 @@ export interface TabBarProps {
 
   /** Currently selected tab index */
   selectedIndex: number;
-
-  /** Callback when a tab is selected */
-  onSelectTab?: (index: number) => void;
-
-  /** Callback when "+" is clicked to add a new remote */
-  onAddRemote?: () => void;
 }
 
 /**
@@ -168,6 +162,9 @@ function AddRemoteButton(): ReactNode {
 /**
  * Tab bar for navigating between instances.
  * Shows tabs at the top of the TUI with connection status.
+ *
+ * Note: Tab selection is handled via keyboard shortcuts in the parent component,
+ * not click handlers (the terminal UI library doesn't support pointer events).
  *
  * Keybindings (handled by parent):
  * - Number keys (1-9): Jump to tab

@@ -124,8 +124,6 @@ export interface RunAppProps {
   selectedTabIndex?: number;
   /** Callback when a tab is selected */
   onSelectTab?: (index: number) => void;
-  /** Callback when "+" is clicked to add a new remote */
-  onAddRemote?: () => void;
   /** Connection toast to display (from InstanceManager) */
   connectionToast?: ConnectionToastMessage | null;
   /** Instance manager for remote data fetching */
@@ -341,7 +339,6 @@ export function RunApp({
   instanceTabs,
   selectedTabIndex = 0,
   onSelectTab,
-  onAddRemote,
   connectionToast,
   instanceManager,
   initialShowEpicLoader = false,
@@ -507,31 +504,18 @@ export function RunApp({
 
   // Fetch remote data when switching to a remote tab AND when it becomes connected
   useEffect(() => {
-    import('fs').then(fs => {
-      fs.appendFileSync('/tmp/ralph-keys.log', `[${new Date().toISOString()}] useEffect: isViewingRemote=${isViewingRemote}, instanceManager=${instanceManager ? 'exists' : 'null'}, selectedTabIndex=${selectedTabIndex}, selectedTabStatus=${selectedTabStatus}\n`);
-    });
     if (!isViewingRemote || !instanceManager) return;
 
     // Wait for the tab to be connected before fetching data
     // This fixes the issue where first tab select doesn't load data because
     // the client is still in 'connecting' state
     if (selectedTabStatus !== 'connected') {
-      import('fs').then(fs => {
-        fs.appendFileSync('/tmp/ralph-keys.log', `[${new Date().toISOString()}] useEffect: Skipping fetch, tab not connected yet (status=${selectedTabStatus})\n`);
-      });
       return;
     }
 
     const fetchRemoteData = async () => {
-      const fs = await import('fs');
-      // Debug: Check connection status
-      const selectedTab = instanceManager.getSelectedTab();
-      const client = instanceManager.getSelectedClient();
-      fs.appendFileSync('/tmp/ralph-keys.log', `[${new Date().toISOString()}] fetchRemoteData: Tab=${selectedTab?.label}, Status=${selectedTab?.status}, Client=${client ? 'exists' : 'null'}\n`);
-
       // Get remote state
       const state = await instanceManager.getRemoteState();
-      fs.appendFileSync('/tmp/ralph-keys.log', `[${new Date().toISOString()}] getRemoteState: ${state ? 'received' : 'null'}\n`);
       if (state) {
         // Convert engine status to RalphStatus
         // Engine statuses: 'idle' | 'running' | 'pausing' | 'paused' | 'stopping'
@@ -579,7 +563,6 @@ export function RunApp({
 
       // Fetch tasks separately (getRemoteState returns empty tasks array)
       const tasks = await instanceManager.getRemoteTasks();
-      fs.appendFileSync('/tmp/ralph-keys.log', `[${new Date().toISOString()}] getRemoteTasks: ${tasks ? `${tasks.length} tasks` : 'null'}\n`);
       if (tasks && tasks.length > 0) {
         // Convert tasks and mark the currently running task as 'active'
         const convertedTasks = convertTasksWithDependencyStatus(tasks);
@@ -1296,33 +1279,18 @@ export function RunApp({
           // When paused, resume will transition back to selecting
           if (isViewingRemote && instanceManager) {
             // Route to remote instance
-            import('fs').then(fs => {
-              fs.appendFileSync('/tmp/ralph-keys.log', `[${new Date().toISOString()}] 'p' pressed, isViewingRemote=true, displayStatus=${displayStatus}\n`);
-            });
             if (displayStatus === 'running' || displayStatus === 'executing' || displayStatus === 'selecting') {
               // Set status to 'pausing' immediately for feedback
               setRemoteStatus('pausing');
-              instanceManager.sendRemoteCommand('pause').then(result => {
-                import('fs').then(fs => {
-                  fs.appendFileSync('/tmp/ralph-keys.log', `[${new Date().toISOString()}] pause command result: ${result}\n`);
-                });
-              });
+              instanceManager.sendRemoteCommand('pause');
             } else if (displayStatus === 'pausing') {
               // Cancel pause request - set back to running
               setRemoteStatus('running');
-              instanceManager.sendRemoteCommand('resume').then(result => {
-                import('fs').then(fs => {
-                  fs.appendFileSync('/tmp/ralph-keys.log', `[${new Date().toISOString()}] resume (cancel pause) command result: ${result}\n`);
-                });
-              });
+              instanceManager.sendRemoteCommand('resume');
             } else if (displayStatus === 'paused') {
               // Resume from paused - set to selecting
               setRemoteStatus('selecting');
-              instanceManager.sendRemoteCommand('resume').then(result => {
-                import('fs').then(fs => {
-                  fs.appendFileSync('/tmp/ralph-keys.log', `[${new Date().toISOString()}] resume command result: ${result}\n`);
-                });
-              });
+              instanceManager.sendRemoteCommand('resume');
             }
           } else {
             // Local engine control
@@ -1627,10 +1595,6 @@ export function RunApp({
         case '7':
         case '8':
         case '9':
-          // Debug: write to file since stderr may not work in TUI mode
-          import('fs').then(fs => {
-            fs.appendFileSync('/tmp/ralph-keys.log', `[${new Date().toISOString()}] Number key: ${key.name}, tabs: ${instanceTabs?.length}, onSelectTab: ${onSelectTab ? 'exists' : 'null'}\n`);
-          });
           if (instanceTabs && onSelectTab) {
             const tabIndex = parseInt(key.name, 10) - 1;
             if (tabIndex < instanceTabs.length) {
@@ -2153,8 +2117,6 @@ export function RunApp({
         <TabBar
           tabs={instanceTabs}
           selectedIndex={selectedTabIndex}
-          onSelectTab={onSelectTab}
-          onAddRemote={onAddRemote}
         />
       )}
 

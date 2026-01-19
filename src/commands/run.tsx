@@ -5,7 +5,7 @@
  * Implements graceful interruption with Ctrl+C confirmation dialog.
  */
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { createCliRenderer } from '@opentui/core';
 import { createRoot } from '@opentui/react';
 import { buildConfig, validateConfig, loadStoredConfig, saveProjectConfig } from '../config/index.js';
@@ -685,11 +685,8 @@ function RunAppWrapper({
   const [connectionToast, setConnectionToast] = useState<ConnectionToastMessage | null>(null);
 
   // Initialize instance manager on mount
-  useState(() => {
+  useEffect(() => {
     instanceManager.onStateChange((tabs, selectedIndex) => {
-      import('fs').then(fs => {
-        fs.appendFileSync('/tmp/ralph-keys.log', `[${new Date().toISOString()}] onStateChange: selectedIndex=${selectedIndex}, tabs=${tabs.length}\n`);
-      });
       setInstanceTabs(tabs);
       setSelectedTabIndex(selectedIndex);
     });
@@ -702,14 +699,16 @@ function RunAppWrapper({
       setInstanceTabs(instanceManager.getTabs());
       setSelectedTabIndex(instanceManager.getSelectedIndex());
     });
-  });
+
+    // Cleanup on unmount
+    return () => {
+      instanceManager.disconnectAll();
+    };
+  }, []);
 
   // Handle tab selection
   const handleSelectTab = async (index: number): Promise<void> => {
-    const fs = await import('fs');
-    fs.appendFileSync('/tmp/ralph-keys.log', `[${new Date().toISOString()}] handleSelectTab called with index: ${index}\n`);
     await instanceManager.selectTab(index);
-    fs.appendFileSync('/tmp/ralph-keys.log', `[${new Date().toISOString()}] selectTab completed\n`);
   };
 
   // Get available plugins from registries
@@ -1121,6 +1120,8 @@ interface HeadlessOptions {
   notificationOptions?: NotificationRunOptions;
   /** If true, keep process alive after engine completes (for remote listener) */
   listenMode?: boolean;
+  /** Remote server instance to stop on shutdown */
+  remoteServer?: RemoteServer | null;
 }
 
 async function runHeadless(
@@ -1131,6 +1132,7 @@ async function runHeadless(
 ): Promise<PersistedSessionState> {
   const notificationOptions = headlessOptions?.notificationOptions;
   const listenMode = headlessOptions?.listenMode ?? false;
+  const remoteServer = headlessOptions?.remoteServer;
   let currentState = persistedState;
   let lastSigintTime = 0;
   const DOUBLE_PRESS_WINDOW_MS = 1000;
@@ -1321,6 +1323,12 @@ async function runHeadless(
     // Save interrupted state
     currentState = { ...currentState, status: 'interrupted' };
     await savePersistedSession(currentState);
+
+    // Stop remote server if running
+    if (remoteServer) {
+      await remoteServer.stop();
+    }
+
     await engine.dispose();
     process.exit(0);
   };
@@ -1357,6 +1365,12 @@ async function runHeadless(
 
     currentState = { ...currentState, status: 'interrupted' };
     await savePersistedSession(currentState);
+
+    // Stop remote server if running
+    if (remoteServer) {
+      await remoteServer.stop();
+    }
+
     await engine.dispose();
     process.exit(0);
   };
@@ -1777,6 +1791,7 @@ export async function executeRunCommand(args: string[]): Promise<void> {
       persistedState = await runHeadless(engine, persistedState, config, {
         notificationOptions: notificationRunOptions,
         listenMode: options.listen,
+        remoteServer,
       });
     }
   } catch (error) {

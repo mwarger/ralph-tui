@@ -195,7 +195,12 @@ export function parseHostPort(hostPort: string): { host: string; port: number } 
   }
 
   if (parts.length === 2) {
-    const port = parseInt(parts[1], 10);
+    const portStr = parts[1];
+    // Reject non-integer port strings (e.g., '1.5', '1e2', ' 80')
+    if (!/^\d+$/.test(portStr)) {
+      return null;
+    }
+    const port = parseInt(portStr, 10);
     if (isNaN(port) || port <= 0 || port > 65535) {
       return null;
     }

@@ -94,9 +94,9 @@ describe('parseHostPort', () => {
       expect(parseHostPort('host:abc')).toBeNull();
     });
 
-    test('parses decimal port as integer (parseInt behavior)', () => {
-      // parseInt('1.5', 10) returns 1, which is valid
-      expect(parseHostPort('host:1.5')).toEqual({ host: 'host', port: 1 });
+    test('returns null for decimal port', () => {
+      // Decimal ports are invalid - must be integers
+      expect(parseHostPort('host:1.5')).toBeNull();
     });
 
     test('returns null for too many colons', () => {

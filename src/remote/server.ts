@@ -447,7 +447,7 @@ export class RemoteServer {
 
     return {
       running: true,
-      port: this.options.port,
+      port: this._actualPort ?? this.options.port,
       host: this.options.hasToken ? '0.0.0.0' : '127.0.0.1',
       startedAt: this.startedAt,
       connectedClients: this.clients.size,
@@ -788,6 +788,12 @@ export class RemoteServer {
       return;
     }
 
+    // Validate iteration count
+    if (typeof message.count !== 'number' || !Number.isInteger(message.count) || message.count <= 0) {
+      this.sendOperationError(ws, message.id, 'add_iterations', 'Invalid iteration count');
+      return;
+    }
+
     try {
       const shouldContinue = await this.options.engine.addIterations(message.count);
       const response = createMessage<OperationResultMessage>('operation_result', {
@@ -816,6 +822,12 @@ export class RemoteServer {
   ): Promise<void> {
     if (!this.options.engine) {
       this.sendOperationError(ws, message.id, 'remove_iterations', 'No engine attached');
+      return;
+    }
+
+    // Validate iteration count
+    if (typeof message.count !== 'number' || !Number.isInteger(message.count) || message.count <= 0) {
+      this.sendOperationError(ws, message.id, 'remove_iterations', 'Invalid iteration count');
       return;
     }
 

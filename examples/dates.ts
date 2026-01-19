@@ -1,6 +1,8 @@
-// ABOUTME: Date utility functions demonstrating common date operations
-// following ralph-tui patterns: ISO 8601 storage, manual duration math,
-// and pure JavaScript Date API without external libraries.
+/**
+ * ABOUTME: Date utility functions demonstrating common date operations
+ * following ralph-tui patterns: ISO 8601 storage, manual duration math,
+ * and pure JavaScript Date API without external libraries.
+ */
 
 /**
  * Format a date to a human-readable string
@@ -37,7 +39,7 @@ export function formatDate(
     }
     case 'full':
     default:
-      return d.toLocaleString();
+      return d.toLocaleString('en-US');
   }
 }
 

@@ -329,9 +329,6 @@ export class InstanceManager {
 
       case 'engine_event':
         // Forward engine events to subscribers (only if this is the selected tab)
-        import('fs').then(fs => {
-          fs.appendFileSync('/tmp/ralph-keys.log', `[${new Date().toISOString()}] engine_event received: type=${event.event.type}, tabAlias=${tab.alias}, selectedAlias=${this.tabs[this.selectedIndex]?.alias}, forwarding=${tab.alias === this.tabs[this.selectedIndex]?.alias}\n`);
-        });
         if (tab.alias === this.tabs[this.selectedIndex]?.alias) {
           this.emitEngineEvent(event.event);
         }
@@ -401,11 +398,7 @@ export class InstanceManager {
 
     try {
       return await client.getState();
-    } catch (error) {
-      // Debug: log the error
-      import('fs').then(fs => {
-        fs.appendFileSync('/tmp/ralph-keys.log', `[${new Date().toISOString()}] getRemoteState ERROR: ${error}\n`);
-      });
+    } catch {
       return null;
     }
   }
@@ -420,11 +413,7 @@ export class InstanceManager {
 
     try {
       return await client.getTasks();
-    } catch (error) {
-      // Debug: log the error
-      import('fs').then(fs => {
-        fs.appendFileSync('/tmp/ralph-keys.log', `[${new Date().toISOString()}] getRemoteTasks ERROR: ${error}\n`);
-      });
+    } catch {
       return null;
     }
   }
@@ -456,21 +445,12 @@ export class InstanceManager {
    */
   async subscribeToSelectedRemote(): Promise<boolean> {
     const client = this.getSelectedClient();
-    import('fs').then(fs => {
-      fs.appendFileSync('/tmp/ralph-keys.log', `[${new Date().toISOString()}] subscribeToSelectedRemote: client=${client ? 'exists' : 'null'}\n`);
-    });
     if (!client) return false;
 
     try {
       await client.subscribe();
-      import('fs').then(fs => {
-        fs.appendFileSync('/tmp/ralph-keys.log', `[${new Date().toISOString()}] subscribeToSelectedRemote: success\n`);
-      });
       return true;
-    } catch (error) {
-      import('fs').then(fs => {
-        fs.appendFileSync('/tmp/ralph-keys.log', `[${new Date().toISOString()}] subscribeToSelectedRemote: failed - ${error}\n`);
-      });
+    } catch {
       return false;
     }
   }
@@ -496,13 +476,7 @@ export class InstanceManager {
   async sendRemoteCommand(
     command: 'pause' | 'resume' | 'interrupt' | 'continue' | 'refreshTasks'
   ): Promise<boolean> {
-    const tab = this.tabs[this.selectedIndex];
-    const clientFromMap = tab?.alias ? this.clients.get(tab.alias) : null;
     const client = this.getSelectedClient();
-    // Debug logging
-    import('fs').then(fs => {
-      fs.appendFileSync('/tmp/ralph-keys.log', `[${new Date().toISOString()}] sendRemoteCommand: ${command}, selectedIndex=${this.selectedIndex}, tabCount=${this.tabs.length}, tab=${tab ? JSON.stringify({ id: tab.id, label: tab.label, isLocal: tab.isLocal, status: tab.status, alias: tab.alias }) : 'null'}, clientFromMap=${clientFromMap ? 'exists' : 'null'}, clientFromMapStatus=${clientFromMap?.status ?? 'N/A'}, client=${client ? 'exists' : 'null'}\n`);
-    });
     if (!client) return false;
 
     try {
@@ -524,11 +498,7 @@ export class InstanceManager {
           break;
       }
       return true;
-    } catch (error) {
-      // Debug logging
-      import('fs').then(fs => {
-        fs.appendFileSync('/tmp/ralph-keys.log', `[${new Date().toISOString()}] sendRemoteCommand ERROR: ${error}\n`);
-      });
+    } catch {
       return false;
     }
   }
@@ -634,11 +604,7 @@ export class InstanceManager {
 
     try {
       return await client.checkConfig();
-    } catch (error) {
-      // Debug: log the error
-      import('fs').then(fs => {
-        fs.appendFileSync('/tmp/ralph-keys.log', `[${new Date().toISOString()}] checkRemoteConfig ERROR: ${error}\n`);
-      });
+    } catch {
       return null;
     }
   }

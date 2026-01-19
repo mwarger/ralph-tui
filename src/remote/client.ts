@@ -968,6 +968,12 @@ export class RemoteClient {
           if (message.type === 'auth_response') {
             const authResponse = message as AuthResponseMessage;
             if (authResponse.success) {
+              // Store connection token if provided (for future reconnections)
+              if (authResponse.connectionToken && authResponse.connectionTokenExpiresAt) {
+                this.connectionToken = authResponse.connectionToken;
+                this.connectionTokenExpiresAt = authResponse.connectionTokenExpiresAt;
+                this.scheduleTokenRefresh();
+              }
               this._status = 'connected';
               this._connectedAt = new Date().toISOString();
               this.startMetricsInterval();
@@ -978,6 +984,7 @@ export class RemoteClient {
               // Auth failed during reconnect - clear connection token and retry with server token
               // This handles the case where server restarted and our connection token is no longer valid
               this.connectionToken = null;
+              this.connectionTokenExpiresAt = null;
               this.cleanupConnection();
               this.scheduleReconnect();
             }
