@@ -1,8 +1,8 @@
 /**
  * ABOUTME: WebSocket client for connecting to remote ralph-tui instances.
- * Manages connection lifecycle, authentication, and reconnection on tab selection.
- * Connection strategy: reconnect on tab selection only, no auto-reconnect on startup.
+ * Manages connection lifecycle, authentication, and auto-reconnection with exponential backoff.
  * US-4: Extended with full remote control capabilities (pause, resume, cancel, state queries).
+ * US-5: Extended with connection resilience (auto-reconnect, latency tracking, connection duration).
  */
 
 import type {
@@ -32,9 +32,57 @@ import type { EngineEvent } from '../engine/types.js';
 
 /**
  * Connection status for a remote instance.
- * Forms a state machine: disconnected -> connecting -> connected -> disconnected (on error)
+ * State machine: disconnected -> connecting -> connected -> reconnecting -> connected
+ *                                                        -> disconnected (on max retries)
+ * - disconnected: Not connected, no reconnection in progress
+ * - connecting: Initial connection attempt
+ * - connected: Successfully connected and authenticated
+ * - reconnecting: Connection lost, attempting to reconnect with exponential backoff
  */
-export type ConnectionStatus = 'disconnected' | 'connecting' | 'connected';
+export type ConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'reconnecting';
+
+/**
+ * Configuration for exponential backoff reconnection.
+ */
+export interface ReconnectConfig {
+  /** Initial delay before first reconnect attempt (ms). Default: 1000 */
+  initialDelayMs: number;
+  /** Maximum delay between reconnect attempts (ms). Default: 30000 */
+  maxDelayMs: number;
+  /** Multiplier for exponential backoff. Default: 2 */
+  backoffMultiplier: number;
+  /** Maximum number of retry attempts before giving up. Default: 10 */
+  maxRetries: number;
+  /** Number of silent retries before alerting user. Default: 3 */
+  silentRetryThreshold: number;
+}
+
+/**
+ * Default reconnection configuration.
+ */
+export const DEFAULT_RECONNECT_CONFIG: ReconnectConfig = {
+  initialDelayMs: 1000,
+  maxDelayMs: 30000,
+  backoffMultiplier: 2,
+  maxRetries: 10,
+  silentRetryThreshold: 3,
+};
+
+/**
+ * Connection metrics for monitoring connection health.
+ */
+export interface ConnectionMetrics {
+  /** Round-trip latency from last ping/pong (ms) */
+  latencyMs: number | null;
+  /** Timestamp when connection was established (ISO 8601) */
+  connectedAt: string | null;
+  /** Connection duration in seconds (computed from connectedAt) */
+  connectionDurationSecs: number;
+  /** Number of reconnection attempts since last successful connection */
+  reconnectAttempts: number;
+  /** Whether currently reconnecting */
+  isReconnecting: boolean;
+}
 
 /**
  * Represents a tab for an instance (local or remote)
@@ -63,6 +111,9 @@ export interface InstanceTab {
 
   /** Last error message (if status is disconnected due to error) */
   lastError?: string;
+
+  /** Connection metrics (latency, duration, reconnect attempts) */
+  metrics?: ConnectionMetrics;
 }
 
 /**
@@ -72,6 +123,10 @@ export type RemoteClientEvent =
   | { type: 'connecting' }
   | { type: 'connected' }
   | { type: 'disconnected'; error?: string }
+  | { type: 'reconnecting'; attempt: number; maxRetries: number; nextDelayMs: number }
+  | { type: 'reconnected'; totalAttempts: number }
+  | { type: 'reconnect_failed'; attempts: number; error: string }
+  | { type: 'metrics_updated'; metrics: ConnectionMetrics }
   | { type: 'message'; message: WSMessage }
   | { type: 'engine_event'; event: EngineEvent };
 
@@ -93,6 +148,7 @@ interface PendingRequest<T> {
  * WebSocket client for connecting to a remote ralph-tui instance.
  * Handles authentication, message passing, and full remote control.
  * US-4: Extended with request/response correlation and engine control methods.
+ * US-5: Extended with auto-reconnect and connection metrics.
  */
 export class RemoteClient {
   private ws: WebSocket | null = null;
@@ -109,16 +165,30 @@ export class RemoteClient {
   /** Request timeout in milliseconds */
   private requestTimeout = 30000;
 
+  // US-5: Reconnection state
+  private reconnectConfig: ReconnectConfig;
+  private reconnectAttempts = 0;
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private intentionalDisconnect = false; // Track if disconnect was intentional
+
+  // US-5: Connection metrics
+  private _connectedAt: string | null = null;
+  private _latencyMs: number | null = null;
+  private lastPingTime: number | null = null;
+  private metricsInterval: ReturnType<typeof setInterval> | null = null;
+
   constructor(
     host: string,
     port: number,
     token: string,
-    eventHandler: RemoteClientEventHandler
+    eventHandler: RemoteClientEventHandler,
+    reconnectConfig: Partial<ReconnectConfig> = {}
   ) {
     this.host = host;
     this.port = port;
     this.token = token;
     this.eventHandler = eventHandler;
+    this.reconnectConfig = { ...DEFAULT_RECONNECT_CONFIG, ...reconnectConfig };
   }
 
   /**
@@ -129,13 +199,37 @@ export class RemoteClient {
   }
 
   /**
+   * Get current connection metrics.
+   */
+  get metrics(): ConnectionMetrics {
+    let connectionDurationSecs = 0;
+    if (this._connectedAt) {
+      connectionDurationSecs = Math.floor(
+        (Date.now() - new Date(this._connectedAt).getTime()) / 1000
+      );
+    }
+    return {
+      latencyMs: this._latencyMs,
+      connectedAt: this._connectedAt,
+      connectionDurationSecs,
+      reconnectAttempts: this.reconnectAttempts,
+      isReconnecting: this._status === 'reconnecting',
+    };
+  }
+
+  /**
    * Connect to the remote instance.
    * Authenticates immediately after connection.
+   * On unexpected disconnect, automatically attempts reconnection with exponential backoff.
    */
   async connect(): Promise<void> {
     if (this._status === 'connecting' || this._status === 'connected') {
       return;
     }
+
+    // Clear any pending reconnect timer
+    this.clearReconnectTimer();
+    this.intentionalDisconnect = false;
 
     this._status = 'connecting';
     this.eventHandler({ type: 'connecting' });
@@ -159,14 +253,22 @@ export class RemoteClient {
         };
 
         this.ws.onerror = () => {
-          this._status = 'disconnected';
-          this.eventHandler({ type: 'disconnected', error: 'Connection error' });
-          reject(new Error('Connection error'));
+          // Don't immediately reject - let onclose handle it for reconnection logic
+          if (this._status === 'connecting') {
+            this._status = 'disconnected';
+            this.eventHandler({ type: 'disconnected', error: 'Connection error' });
+            reject(new Error('Connection error'));
+          }
         };
 
         this.ws.onclose = () => {
-          this.cleanup();
-          if (this._status === 'connected') {
+          const wasConnected = this._status === 'connected';
+          this.cleanupConnection();
+
+          if (wasConnected && !this.intentionalDisconnect) {
+            // Connection was lost unexpectedly - attempt auto-reconnect
+            this.scheduleReconnect();
+          } else if (this._status !== 'reconnecting') {
             this._status = 'disconnected';
             this.eventHandler({ type: 'disconnected', error: 'Connection closed' });
           }
@@ -182,8 +284,11 @@ export class RemoteClient {
 
   /**
    * Disconnect from the remote instance.
+   * This is an intentional disconnect - no auto-reconnect will be attempted.
    */
   disconnect(): void {
+    this.intentionalDisconnect = true;
+    this.clearReconnectTimer();
     this.cleanup();
     this._status = 'disconnected';
     this.eventHandler({ type: 'disconnected' });
@@ -232,8 +337,21 @@ export class RemoteClient {
       case 'auth_response': {
         const authResponse = message as AuthResponseMessage;
         if (authResponse.success) {
+          const wasReconnecting = this._status === 'reconnecting';
           this._status = 'connected';
-          this.eventHandler({ type: 'connected' });
+
+          // Track connection metrics
+          this._connectedAt = new Date().toISOString();
+          this.startMetricsInterval();
+
+          if (wasReconnecting) {
+            // This was a successful reconnection
+            this.eventHandler({ type: 'reconnected', totalAttempts: this.reconnectAttempts });
+            this.reconnectAttempts = 0;
+          } else {
+            this.eventHandler({ type: 'connected' });
+          }
+
           this.startPingInterval();
           resolveConnect();
         } else {
@@ -247,7 +365,11 @@ export class RemoteClient {
       }
 
       case 'pong': {
-        // Heartbeat acknowledged
+        // Heartbeat acknowledged - calculate latency
+        if (this.lastPingTime !== null) {
+          this._latencyMs = Date.now() - this.lastPingTime;
+          this.eventHandler({ type: 'metrics_updated', metrics: this.metrics });
+        }
         break;
       }
 
@@ -461,12 +583,14 @@ export class RemoteClient {
   }
 
   /**
-   * Start sending periodic ping messages
+   * Start sending periodic ping messages for keepalive and latency measurement.
    */
   private startPingInterval(): void {
     this.stopPingInterval();
     this.pingInterval = setInterval(() => {
       if (this._status === 'connected' && this.ws) {
+        // Track when ping was sent for latency calculation
+        this.lastPingTime = Date.now();
         const pingMessage: PingMessage = {
           type: 'ping',
           id: crypto.randomUUID(),
@@ -488,9 +612,22 @@ export class RemoteClient {
   }
 
   /**
-   * Clean up resources
+   * Clean up resources (full cleanup including reconnection state).
    */
   private cleanup(): void {
+    this.cleanupConnection();
+    this.clearReconnectTimer();
+    this.stopMetricsInterval();
+    this.reconnectAttempts = 0;
+    this._connectedAt = null;
+    this._latencyMs = null;
+  }
+
+  /**
+   * Clean up connection resources without resetting reconnection state.
+   * Used when preparing for a reconnection attempt.
+   */
+  private cleanupConnection(): void {
     this.stopPingInterval();
     // Reject all pending requests
     for (const [id, pending] of this.pendingRequests) {
@@ -511,6 +648,169 @@ export class RemoteClient {
       }
       this.ws = null;
     }
+  }
+
+  // ============================================================================
+  // US-5: Connection Resilience Methods
+  // ============================================================================
+
+  /**
+   * Schedule a reconnection attempt with exponential backoff.
+   * Called automatically when an established connection is lost unexpectedly.
+   */
+  private scheduleReconnect(): void {
+    if (this.reconnectAttempts >= this.reconnectConfig.maxRetries) {
+      // Max retries exceeded - give up
+      this._status = 'disconnected';
+      this.eventHandler({
+        type: 'reconnect_failed',
+        attempts: this.reconnectAttempts,
+        error: `Failed to reconnect after ${this.reconnectAttempts} attempts`,
+      });
+      this.reconnectAttempts = 0;
+      return;
+    }
+
+    this._status = 'reconnecting';
+    this.reconnectAttempts++;
+
+    // Calculate delay with exponential backoff
+    const delay = Math.min(
+      this.reconnectConfig.initialDelayMs *
+        Math.pow(this.reconnectConfig.backoffMultiplier, this.reconnectAttempts - 1),
+      this.reconnectConfig.maxDelayMs
+    );
+
+    // Emit reconnecting event (silent if under threshold)
+    this.eventHandler({
+      type: 'reconnecting',
+      attempt: this.reconnectAttempts,
+      maxRetries: this.reconnectConfig.maxRetries,
+      nextDelayMs: delay,
+    });
+
+    this.reconnectTimer = setTimeout(() => {
+      this.attemptReconnect();
+    }, delay);
+  }
+
+  /**
+   * Attempt to reconnect to the remote instance.
+   */
+  private async attemptReconnect(): Promise<void> {
+    try {
+      const url = `ws://${this.host}:${this.port}`;
+      this.ws = new WebSocket(url);
+
+      this.ws.onopen = () => {
+        this.authenticate();
+      };
+
+      this.ws.onmessage = (event) => {
+        try {
+          const message = JSON.parse(event.data as string) as WSMessage;
+          // For reconnection, we handle auth_response specially
+          if (message.type === 'auth_response') {
+            const authResponse = message as AuthResponseMessage;
+            if (authResponse.success) {
+              this._status = 'connected';
+              this._connectedAt = new Date().toISOString();
+              this.startMetricsInterval();
+              this.eventHandler({ type: 'reconnected', totalAttempts: this.reconnectAttempts });
+              this.reconnectAttempts = 0;
+              this.startPingInterval();
+            } else {
+              // Auth failed during reconnect - try again
+              this.cleanupConnection();
+              this.scheduleReconnect();
+            }
+          } else if (message.type === 'pong') {
+            if (this.lastPingTime !== null) {
+              this._latencyMs = Date.now() - this.lastPingTime;
+              this.eventHandler({ type: 'metrics_updated', metrics: this.metrics });
+            }
+          } else if (message.type === 'engine_event') {
+            const engineEventMsg = message as EngineEventMessage;
+            this.eventHandler({ type: 'engine_event', event: engineEventMsg.event });
+          } else {
+            // Check for pending request responses
+            const pending = this.pendingRequests.get(message.id);
+            if (pending) {
+              clearTimeout(pending.timeout);
+              this.pendingRequests.delete(message.id);
+              pending.resolve(message);
+            } else {
+              this.eventHandler({ type: 'message', message });
+            }
+          }
+        } catch {
+          // Ignore invalid messages
+        }
+      };
+
+      this.ws.onerror = () => {
+        // Connection error during reconnect - schedule another attempt
+        this.cleanupConnection();
+        this.scheduleReconnect();
+      };
+
+      this.ws.onclose = () => {
+        if (this._status === 'connected' && !this.intentionalDisconnect) {
+          // Connection lost again - try to reconnect
+          this.cleanupConnection();
+          this.scheduleReconnect();
+        } else if (this._status === 'reconnecting') {
+          // Reconnect attempt failed - onclose will fire, schedule next attempt
+          this.cleanupConnection();
+          this.scheduleReconnect();
+        }
+      };
+    } catch {
+      // Failed to create WebSocket - schedule another attempt
+      this.cleanupConnection();
+      this.scheduleReconnect();
+    }
+  }
+
+  /**
+   * Clear any pending reconnection timer.
+   */
+  private clearReconnectTimer(): void {
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+  }
+
+  /**
+   * Start interval for updating connection duration metrics.
+   */
+  private startMetricsInterval(): void {
+    this.stopMetricsInterval();
+    // Emit metrics periodically (every 10 seconds) so UI can update connection duration
+    this.metricsInterval = setInterval(() => {
+      if (this._status === 'connected') {
+        this.eventHandler({ type: 'metrics_updated', metrics: this.metrics });
+      }
+    }, 10000);
+  }
+
+  /**
+   * Stop the metrics update interval.
+   */
+  private stopMetricsInterval(): void {
+    if (this.metricsInterval) {
+      clearInterval(this.metricsInterval);
+      this.metricsInterval = null;
+    }
+  }
+
+  /**
+   * Check if reconnection attempts have exceeded the silent retry threshold.
+   * Used by consumers to decide whether to show alerts.
+   */
+  shouldAlertOnReconnect(): boolean {
+    return this.reconnectAttempts > this.reconnectConfig.silentRetryThreshold;
   }
 }
 

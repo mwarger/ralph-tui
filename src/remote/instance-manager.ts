@@ -1,12 +1,36 @@
 /**
  * ABOUTME: Manages multiple remote instance connections for the TUI.
- * Coordinates tab state, connection lifecycle, and reconnection on tab selection.
+ * Coordinates tab state, connection lifecycle, and auto-reconnection with exponential backoff.
+ * US-5: Extended with connection resilience (auto-reconnect, metrics tracking, toast events).
  * Provides a unified interface for the TUI to interact with local and remote instances.
  */
 
 import type { RemoteServerConfig } from './config.js';
 import { listRemotes, updateLastConnected } from './config.js';
-import { RemoteClient, createLocalTab, createRemoteTab, type InstanceTab, type ConnectionStatus } from './client.js';
+import {
+  RemoteClient,
+  createLocalTab,
+  createRemoteTab,
+  type InstanceTab,
+  type ConnectionStatus,
+  type ConnectionMetrics,
+  type RemoteClientEvent,
+} from './client.js';
+
+/**
+ * Toast notification types for connection events.
+ * These are emitted to the UI for display as temporary notifications.
+ */
+export type ConnectionToast =
+  | { type: 'reconnecting'; alias: string; attempt: number; maxRetries: number }
+  | { type: 'reconnected'; alias: string; totalAttempts: number }
+  | { type: 'reconnect_failed'; alias: string; attempts: number; error: string }
+  | { type: 'connection_error'; alias: string; error: string };
+
+/**
+ * Callback for toast notifications
+ */
+export type ToastHandler = (toast: ConnectionToast) => void;
 
 /**
  * Callback for instance state changes
@@ -16,6 +40,7 @@ export type InstanceStateChangeHandler = (tabs: InstanceTab[], selectedIndex: nu
 /**
  * Manages local and remote ralph-tui instances.
  * Handles tab state, connection management, and instance selection.
+ * US-5: Tracks connection metrics and emits toast notifications for reconnection events.
  */
 export class InstanceManager {
   private tabs: InstanceTab[] = [];
@@ -23,6 +48,7 @@ export class InstanceManager {
   private clients: Map<string, RemoteClient> = new Map();
   private stateChangeHandler: InstanceStateChangeHandler | null = null;
   private remoteConfigs: Map<string, RemoteServerConfig> = new Map();
+  private toastHandler: ToastHandler | null = null;
 
   /**
    * Initialize the instance manager.
@@ -48,6 +74,23 @@ export class InstanceManager {
    */
   onStateChange(handler: InstanceStateChangeHandler): void {
     this.stateChangeHandler = handler;
+  }
+
+  /**
+   * Register a handler for toast notifications (reconnection events, errors).
+   * Toasts are temporary notifications shown to the user.
+   */
+  onToast(handler: ToastHandler): void {
+    this.toastHandler = handler;
+  }
+
+  /**
+   * Emit a toast notification.
+   */
+  private emitToast(toast: ConnectionToast): void {
+    if (this.toastHandler) {
+      this.toastHandler(toast);
+    }
   }
 
   /**
@@ -204,39 +247,101 @@ export class InstanceManager {
       await client.connect();
       // Update last connected timestamp
       await updateLastConnected(tab.alias);
-    } catch (error) {
+    } catch {
       // Error handling is done in the event handler
     }
   }
 
   /**
-   * Handle events from a remote client
+   * Handle events from a remote client.
+   * US-5: Extended to handle reconnection events and metrics updates.
    */
-  private handleClientEvent(alias: string, event: { type: string; error?: string }): void {
+  private handleClientEvent(alias: string, event: RemoteClientEvent): void {
     const tab = this.tabs.find((t) => t.alias === alias);
     if (!tab) return;
+
+    const client = this.clients.get(alias);
 
     switch (event.type) {
       case 'connecting':
         this.updateTabStatus(tab.id, 'connecting');
         break;
+
       case 'connected':
         this.updateTabStatus(tab.id, 'connected');
+        if (client) {
+          this.updateTabMetrics(tab.id, client.metrics);
+        }
         break;
+
       case 'disconnected':
         this.updateTabStatus(tab.id, 'disconnected', event.error);
+        if (event.error) {
+          this.emitToast({ type: 'connection_error', alias, error: event.error });
+        }
+        break;
+
+      case 'reconnecting':
+        this.updateTabStatus(tab.id, 'reconnecting');
+        // Only show toast if past silent retry threshold (client knows this)
+        if (client?.shouldAlertOnReconnect()) {
+          this.emitToast({
+            type: 'reconnecting',
+            alias,
+            attempt: event.attempt,
+            maxRetries: event.maxRetries,
+          });
+        }
+        break;
+
+      case 'reconnected':
+        this.updateTabStatus(tab.id, 'connected');
+        if (client) {
+          this.updateTabMetrics(tab.id, client.metrics);
+        }
+        // Always show toast for successful reconnection
+        this.emitToast({
+          type: 'reconnected',
+          alias,
+          totalAttempts: event.totalAttempts,
+        });
+        break;
+
+      case 'reconnect_failed':
+        this.updateTabStatus(tab.id, 'disconnected', event.error);
+        this.emitToast({
+          type: 'reconnect_failed',
+          alias,
+          attempts: event.attempts,
+          error: event.error,
+        });
+        break;
+
+      case 'metrics_updated':
+        this.updateTabMetrics(tab.id, event.metrics);
         break;
     }
   }
 
   /**
-   * Update a tab's connection status
+   * Update a tab's connection status.
    */
   private updateTabStatus(tabId: string, status: ConnectionStatus, error?: string): void {
     const tab = this.tabs.find((t) => t.id === tabId);
     if (tab) {
       tab.status = status;
       tab.lastError = error;
+      this.notifyStateChange();
+    }
+  }
+
+  /**
+   * Update a tab's connection metrics.
+   */
+  private updateTabMetrics(tabId: string, metrics: ConnectionMetrics): void {
+    const tab = this.tabs.find((t) => t.id === tabId);
+    if (tab) {
+      tab.metrics = metrics;
       this.notifyStateChange();
     }
   }

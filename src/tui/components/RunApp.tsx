@@ -1,6 +1,7 @@
 /**
  * ABOUTME: RunApp component for the Ralph TUI execution view.
  * Integrates with the execution engine to display real-time progress.
+ * US-5: Extended with connection resilience toast notifications.
  * Handles graceful interruption with confirmation dialog.
  */
 
@@ -26,6 +27,8 @@ import { EpicLoaderOverlay } from './EpicLoaderOverlay.js';
 import type { EpicLoaderMode } from './EpicLoaderOverlay.js';
 import { SubagentTreePanel } from './SubagentTreePanel.js';
 import { TabBar } from './TabBar.js';
+import { Toast, formatConnectionToast } from './Toast.js';
+import type { ConnectionToastMessage } from './Toast.js';
 import type { InstanceTab } from '../../remote/client.js';
 import type {
   ExecutionEngine,
@@ -121,6 +124,8 @@ export interface RunAppProps {
   onSelectTab?: (index: number) => void;
   /** Callback when "+" is clicked to add a new remote */
   onAddRemote?: () => void;
+  /** Connection toast to display (from InstanceManager) */
+  connectionToast?: ConnectionToastMessage | null;
 }
 
 /**
@@ -331,6 +336,7 @@ export function RunApp({
   selectedTabIndex = 0,
   onSelectTab,
   onAddRemote,
+  connectionToast,
 }: RunAppProps): ReactNode {
   const { width, height } = useTerminalDimensions();
   const renderer = useRenderer();
@@ -1790,6 +1796,21 @@ export function RunApp({
           <text fg={colors.status.success}>✓ {copyFeedback}</text>
         </box>
       )}
+
+      {/* Connection toast - shows reconnection events (US-5) */}
+      {connectionToast && (() => {
+        const formatted = formatConnectionToast(connectionToast);
+        return (
+          <Toast
+            visible={true}
+            message={formatted.message}
+            icon={formatted.icon}
+            variant={formatted.variant}
+            bottom={4}
+            right={2}
+          />
+        );
+      })()}
 
       {/* Interrupt Confirmation Dialog */}
       <ConfirmationDialog
