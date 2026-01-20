@@ -378,11 +378,33 @@ export class BeadsRustTrackerPlugin extends BaseTrackerPlugin {
     return brTaskToTask(tasksJson[0]!);
   }
 
-  async completeTask(id: string): Promise<TaskCompletionResult> {
+  override async completeTask(
+    id: string,
+    reason?: string
+  ): Promise<TaskCompletionResult> {
+    const args = ['close', id];
+
+    if (typeof reason === 'string' && reason.trim().length > 0) {
+      args.push('--reason', reason);
+    }
+
+    const { exitCode, stderr, stdout } = await execBr(args, this.workingDir);
+
+    if (exitCode !== 0) {
+      return {
+        success: false,
+        message: `Failed to close task ${id}`,
+        error: stderr || stdout,
+      };
+    }
+
+    // Fetch the updated task
+    const task = await this.getTask(id);
+
     return {
-      success: false,
-      message: `beads-rust tracker is not yet able to close tasks (${id})`,
-      error: 'Not implemented',
+      success: true,
+      message: `Task ${id} closed successfully`,
+      task,
     };
   }
 

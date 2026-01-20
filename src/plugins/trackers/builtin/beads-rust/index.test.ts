@@ -321,4 +321,71 @@ describe('BeadsRustTrackerPlugin', () => {
       expect(task).toBeUndefined();
     });
   });
+
+  describe('completeTask', () => {
+    test('executes br close <id> without --force', async () => {
+      mockSpawnResponses = [{ exitCode: 0, stdout: 'br version 0.4.1\n' }];
+
+      const plugin = new BeadsRustTrackerPlugin();
+      await plugin.initialize({ workingDir: '/test' });
+
+      mockSpawnArgs = [];
+      mockSpawnResponses = [
+        { exitCode: 0 },
+        {
+          exitCode: 0,
+          stdout: JSON.stringify([
+            { id: 't1', title: 'Task 1', status: 'closed', priority: 2 },
+          ]),
+        },
+      ];
+
+      const result = await plugin.completeTask('t1');
+
+      expect(result.success).toBe(true);
+      expect(result.task?.status).toBe('completed');
+      expect(mockSpawnArgs.length).toBe(2);
+      expect(mockSpawnArgs[0]?.args).toEqual(['close', 't1']);
+      expect(mockSpawnArgs[1]?.args).toEqual(['show', 't1', '--json']);
+    });
+
+    test('supports --reason', async () => {
+      mockSpawnResponses = [{ exitCode: 0, stdout: 'br version 0.4.1\n' }];
+
+      const plugin = new BeadsRustTrackerPlugin();
+      await plugin.initialize({ workingDir: '/test' });
+
+      mockSpawnArgs = [];
+      mockSpawnResponses = [
+        { exitCode: 0 },
+        {
+          exitCode: 0,
+          stdout: JSON.stringify([
+            { id: 't1', title: 'Task 1', status: 'closed', priority: 2 },
+          ]),
+        },
+      ];
+
+      await plugin.completeTask('t1', 'shipped');
+
+      expect(mockSpawnArgs[0]?.args).toEqual(['close', 't1', '--reason', 'shipped']);
+    });
+
+    test('returns failure result when br close fails', async () => {
+      mockSpawnResponses = [{ exitCode: 0, stdout: 'br version 0.4.1\n' }];
+
+      const plugin = new BeadsRustTrackerPlugin();
+      await plugin.initialize({ workingDir: '/test' });
+
+      mockSpawnArgs = [];
+      mockSpawnResponses = [{ exitCode: 1, stderr: 'permission denied' }];
+
+      const result = await plugin.completeTask('t1');
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('permission denied');
+      expect(mockSpawnArgs.length).toBe(1);
+      expect(mockSpawnArgs[0]?.args).toEqual(['close', 't1']);
+    });
+  });
 });
