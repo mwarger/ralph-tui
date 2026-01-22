@@ -19,7 +19,7 @@ import { ChatEngine, createPrdChatEngine, createTaskChatEngine, slugify } from '
 import type { ChatMessage, ChatEvent } from '../../chat/types.js';
 import type { AgentPlugin } from '../../plugins/agents/types.js';
 import { stripAnsiCodes, type FormattedSegment } from '../../plugins/agents/output-formatting.js';
-import { parsePrdMarkdown } from '../../prd/index.js';
+import { parsePrdMarkdown } from '../../prd/parser.js';
 import { colors } from '../theme.js';
 
 /**
