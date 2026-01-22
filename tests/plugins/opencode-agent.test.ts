@@ -5,13 +5,12 @@
  * Also tests buffer flushing on stream end for reliable JSONL parsing.
  */
 
-import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
+import { describe, test, expect, beforeEach, afterEach, mock, spyOn } from 'bun:test';
 import {
   OpenCodeAgentPlugin,
   createOpenCodeJsonlBuffer,
-  type JsonlBufferCallbacks,
 } from '../../src/plugins/agents/builtin/opencode.js';
-import type { AgentFileContext, AgentExecuteOptions } from '../../src/plugins/agents/types.js';
+import type { AgentFileContext, AgentExecuteOptions, AgentExecutionResult } from '../../src/plugins/agents/types.js';
 
 /**
  * Test subclass to expose protected methods for testing.
@@ -628,6 +627,192 @@ describe('OpenCodeAgentPlugin', () => {
 
       expect(receivedMessages.length).toBe(1);
       expect(receivedMessages[0].type).toBe('text');
+    });
+
+    test('calls both onJsonlMessage and onDisplayEvents for same line', () => {
+      const jsonlMessages: Record<string, unknown>[] = [];
+      const displayEventCalls: unknown[][] = [];
+
+      const buffer = createOpenCodeJsonlBuffer({
+        onJsonlMessage: (msg) => jsonlMessages.push(msg),
+        onDisplayEvents: (events) => displayEventCalls.push(events),
+      });
+
+      // Send OpenCode-format JSON that triggers both callbacks
+      buffer.push('{"type":"text","part":{"text":"Test message"}}\n');
+
+      expect(jsonlMessages.length).toBe(1);
+      expect(displayEventCalls.length).toBe(1);
+    });
+
+    test('skips onJsonlMessage for non-JSON lines starting with non-brace', () => {
+      const jsonlMessages: Record<string, unknown>[] = [];
+
+      const buffer = createOpenCodeJsonlBuffer({
+        onJsonlMessage: (msg) => jsonlMessages.push(msg),
+      });
+
+      // Send line starting with something other than {
+      buffer.push('plain text without json\n');
+      buffer.push('[1,2,3]\n'); // Array, not object
+      buffer.push('{"valid":"json"}\n'); // Valid JSON object
+
+      // Only the valid JSON object should be forwarded
+      expect(jsonlMessages.length).toBe(1);
+      expect(jsonlMessages[0].valid).toBe('json');
+    });
+
+    test('handles flush with only whitespace in buffer', () => {
+      const jsonlMessages: Record<string, unknown>[] = [];
+
+      const buffer = createOpenCodeJsonlBuffer({
+        onJsonlMessage: (msg) => jsonlMessages.push(msg),
+      });
+
+      // Push only whitespace
+      buffer.push('   \n   ');
+
+      // Flush - should not call callback for whitespace
+      buffer.flush();
+
+      expect(jsonlMessages.length).toBe(0);
+    });
+  });
+
+  describe('execute method integration', () => {
+    /**
+     * These tests verify the execute method properly integrates with createOpenCodeJsonlBuffer.
+     * We use spyOn to intercept the base class execute call and verify wrapping behavior.
+     */
+    let plugin: OpenCodeAgentPlugin;
+    let baseExecuteSpy: ReturnType<typeof spyOn>;
+
+    beforeEach(async () => {
+      plugin = new OpenCodeAgentPlugin();
+      await plugin.initialize({});
+
+      // Spy on the base class execute method
+      const baseProto = Object.getPrototypeOf(Object.getPrototypeOf(plugin));
+      baseExecuteSpy = spyOn(baseProto, 'execute').mockImplementation(
+        (_prompt: string, _files: unknown, options: AgentExecuteOptions) => {
+          // Return a mock handle
+          const mockResult: AgentExecutionResult = {
+            executionId: 'mock-exec',
+            status: 'completed',
+            exitCode: 0,
+            stdout: '',
+            stderr: '',
+            durationMs: 100,
+            interrupted: false,
+            startedAt: new Date().toISOString(),
+            endedAt: new Date().toISOString(),
+          };
+
+          // Create promise that simulates the execute lifecycle
+          const promise = new Promise<AgentExecutionResult>((resolve) => {
+            // Use setImmediate to ensure callbacks are called before promise resolves
+            setImmediate(() => {
+              // Simulate some stdout data
+              options?.onStdout?.('{"type":"text","part":{"text":"Hello"}}\n');
+              // Then end
+              options?.onEnd?.(mockResult);
+              resolve(mockResult);
+            });
+          });
+
+          return {
+            executionId: mockResult.executionId,
+            promise,
+            interrupt: () => {},
+            isRunning: () => false,
+          };
+        }
+      );
+    });
+
+    afterEach(async () => {
+      baseExecuteSpy?.mockRestore();
+      await plugin.dispose();
+    });
+
+    test('wraps onStdout to buffer and parse JSON', async () => {
+      const receivedOutput: string[] = [];
+
+      const handle = plugin.execute('test', undefined, {
+        onStdout: (data) => receivedOutput.push(data),
+      });
+
+      await handle.promise;
+
+      // Verify base execute was called
+      expect(baseExecuteSpy).toHaveBeenCalled();
+
+      // The wrapped onStdout should have parsed the JSON and extracted text
+      expect(receivedOutput.length).toBeGreaterThan(0);
+    });
+
+    test('wraps onEnd to flush buffer before calling original', async () => {
+      let onEndCalled = false;
+      let onEndResult: AgentExecutionResult | undefined;
+
+      const handle = plugin.execute('test', undefined, {
+        onStdout: () => {},
+        onEnd: (result) => {
+          onEndCalled = true;
+          onEndResult = result;
+        },
+      });
+
+      await handle.promise;
+
+      expect(onEndCalled).toBe(true);
+      expect(onEndResult?.status).toBe('completed');
+    });
+
+    test('creates wrapped onStdout when onJsonlMessage is provided', () => {
+      plugin.execute('test', undefined, {
+        onJsonlMessage: () => {},
+      });
+
+      // Verify the base execute was called with a wrapped onStdout
+      expect(baseExecuteSpy).toHaveBeenCalled();
+      const passedOptions = baseExecuteSpy.mock.calls[0][2] as AgentExecuteOptions;
+      expect(passedOptions.onStdout).toBeDefined();
+    });
+
+    test('creates wrapped onStdout when onStdoutSegments is provided', () => {
+      plugin.execute('test', undefined, {
+        onStdoutSegments: () => {},
+      });
+
+      // Verify the base execute was called with a wrapped onStdout
+      expect(baseExecuteSpy).toHaveBeenCalled();
+      const passedOptions = baseExecuteSpy.mock.calls[0][2] as AgentExecuteOptions;
+      expect(passedOptions.onStdout).toBeDefined();
+    });
+
+    test('does not wrap onStdout when no output callbacks provided', () => {
+      plugin.execute('test', undefined, {
+        timeout: 5000,
+      });
+
+      // Verify the base execute was called without wrapped onStdout
+      expect(baseExecuteSpy).toHaveBeenCalled();
+      const passedOptions = baseExecuteSpy.mock.calls[0][2] as AgentExecuteOptions;
+      expect(passedOptions.onStdout).toBeUndefined();
+    });
+
+    test('preserves other options when wrapping', () => {
+      plugin.execute('test', undefined, {
+        timeout: 30000,
+        cwd: '/test/dir',
+        onStdout: () => {},
+      });
+
+      expect(baseExecuteSpy).toHaveBeenCalled();
+      const passedOptions = baseExecuteSpy.mock.calls[0][2] as AgentExecuteOptions;
+      expect(passedOptions.timeout).toBe(30000);
+      expect(passedOptions.cwd).toBe('/test/dir');
     });
   });
 });
