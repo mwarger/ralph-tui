@@ -27,6 +27,7 @@ import {
   printSuccess,
   printInfo,
   printError,
+  isInteractiveTerminal,
 } from './prompts.js';
 import {
   listBundledSkills,
@@ -207,6 +208,18 @@ export async function runSetupWizard(
   const cwd = options.cwd ?? process.cwd();
 
   try {
+    // Check if we're in an interactive terminal
+    if (!isInteractiveTerminal()) {
+      return {
+        success: false,
+        error:
+          'The setup wizard requires an interactive terminal. ' +
+          'Please run this command in a terminal that supports interactive input (TTY). ' +
+          'If running in a container or automated environment, consider creating the ' +
+          'configuration file manually at .ralph-tui/config.toml',
+      };
+    }
+
     // Check if config already exists
     if (!options.force) {
       const exists = await projectConfigExists(cwd);

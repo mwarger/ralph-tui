@@ -38,13 +38,20 @@ function formatHelp(help?: string): string {
 }
 
 /**
+ * Check if we're running in an interactive terminal environment
+ */
+export function isInteractiveTerminal(): boolean {
+  return Boolean(process.stdin.isTTY && process.stdout.isTTY);
+}
+
+/**
  * Create a readline interface for prompting
  */
 function createReadline(): readline.Interface {
   return readline.createInterface({
     input: process.stdin,
     output: process.stdout,
-    terminal: true,
+    terminal: process.stdin.isTTY ?? false,
   });
 }
 

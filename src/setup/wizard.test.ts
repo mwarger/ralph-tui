@@ -26,6 +26,7 @@ import { registerBuiltinTrackers } from '../plugins/trackers/builtin/index.js';
 let mockPromptSelect: (prompt: string, choices: unknown[], options?: unknown) => Promise<string>;
 let mockPromptNumber: (prompt: string, options?: unknown) => Promise<number>;
 let mockPromptBoolean: (prompt: string, options?: unknown) => Promise<boolean>;
+let mockIsInteractiveTerminal: () => boolean;
 
 // Mock the prompts module before importing wizard
 mock.module('./prompts.js', () => ({
@@ -39,6 +40,7 @@ mock.module('./prompts.js', () => ({
   printSuccess: () => {},
   printInfo: () => {},
   printError: () => {},
+  isInteractiveTerminal: () => mockIsInteractiveTerminal(),
 }));
 
 // Mock skill-installer to avoid file system operations during tests
@@ -152,11 +154,24 @@ describe('runSetupWizard', () => {
     mockPromptSelect = () => Promise.resolve('json');
     mockPromptNumber = () => Promise.resolve(10);
     mockPromptBoolean = () => Promise.resolve(false);
+    mockIsInteractiveTerminal = () => true;
   });
 
   afterEach(async () => {
     await rm(tempDir, { recursive: true, force: true });
     consoleLogSpy.mockRestore();
+  });
+
+  test('fails with helpful message when not in interactive terminal', async () => {
+    // Simulate non-TTY environment (like running in container or piped input)
+    mockIsInteractiveTerminal = () => false;
+
+    const result = await runSetupWizard({ cwd: tempDir });
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('interactive terminal');
+    expect(result.error).toContain('TTY');
+    expect(result.error).toContain('.ralph-tui/config.toml');
   });
 
   test('creates config file in .ralph-tui directory', async () => {
@@ -308,6 +323,7 @@ describe('checkAndRunSetup', () => {
     mockPromptSelect = () => Promise.resolve('json');
     mockPromptNumber = () => Promise.resolve(10);
     mockPromptBoolean = () => Promise.resolve(false);
+    mockIsInteractiveTerminal = () => true;
 
     // Suppress console output
     consoleLogSpy = spyOn(console, 'log').mockImplementation(() => {});
@@ -369,6 +385,7 @@ describe('wizard output messages', () => {
     mockPromptSelect = () => Promise.resolve('json');
     mockPromptNumber = () => Promise.resolve(10);
     mockPromptBoolean = () => Promise.resolve(false);
+    mockIsInteractiveTerminal = () => true;
   });
 
   afterEach(async () => {
