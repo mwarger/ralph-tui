@@ -802,7 +802,7 @@ function TaskOutputView({
           backgroundColor: colors.bg.secondary,
         }}
       >
-        <scrollbox style={{ flexGrow: 1, padding: 1 }}>
+        <scrollbox style={{ flexGrow: 1, padding: 1 }} stickyScroll={true} stickyStart="bottom">
           {/* Line-based coloring with tool names in green */}
           {displayOutput !== undefined && displayOutput.length > 0 ? (
             <box style={{ flexDirection: 'column' }}>
