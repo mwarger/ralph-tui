@@ -187,6 +187,8 @@ Use these slash commands in your agent:
 /ralph-tui-create-beads  # Convert PRD to Beads issues
 ```
 
+> **Note for OpenCode users:** Skills in OpenCode require a trailing space after the command to be recognized in interactive sessions. For example, type `/ralph-tui-prd ` (with a space) rather than just `/ralph-tui-prd`. This is due to how OpenCode's autocomplete system differs from its skill lookup.
+
 This lets you create PRDs while referencing source files (`@filename`) and using your full conversation context—then use `ralph-tui run` for autonomous execution.
 
 ### Custom Skills Directory
