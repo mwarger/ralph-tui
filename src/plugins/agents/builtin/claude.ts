@@ -178,7 +178,7 @@ export class ClaudeAgentPlugin extends BaseAgentPlugin {
     return new Promise((resolve) => {
       const proc = spawn(command, ['--version'], {
         stdio: ['ignore', 'pipe', 'pipe'],
-        shell: true,
+        shell: process.platform === 'win32',
       });
 
       let stdout = '';
