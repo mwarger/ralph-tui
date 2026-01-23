@@ -187,6 +187,7 @@ function mergeConfigs(global: StoredConfig, project: StoredConfig): StoredConfig
   // Replace arrays entirely if present in project config
   if (project.fallbackAgents !== undefined) merged.fallbackAgents = project.fallbackAgents;
   if (project.envExclude !== undefined) merged.envExclude = project.envExclude;
+  if (project.envPassthrough !== undefined) merged.envPassthrough = project.envPassthrough;
 
   // Merge nested objects
   if (project.rateLimitHandling !== undefined) {
