@@ -302,6 +302,12 @@ async function runChatMode(parsedArgs: CreatePrdArgs): Promise<PrdCreationResult
     console.log(line);
   }
 
+  // Pause briefly so the user can read blocked vars before TUI clears screen
+  if (envReport.blocked.length > 0) {
+    console.log('  (continuing in 3s...)');
+    await new Promise(resolve => setTimeout(resolve, 3000));
+  }
+
   // Run preflight check to verify agent can respond before starting conversation
   console.log('Verifying agent configuration...');
   const preflightResult = await agent.preflight({ timeout: 30000 });

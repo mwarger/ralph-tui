@@ -1554,6 +1554,12 @@ export async function executeRunCommand(args: string[]): Promise<void> {
   for (const line of envLines) {
     console.log(line);
   }
+
+  // Pause briefly so the user can read blocked vars before TUI clears screen
+  if (envReport.blocked.length > 0 && config.showTui) {
+    console.log('  (continuing in 3s...)');
+    await new Promise(resolve => setTimeout(resolve, 3000));
+  }
   console.log('');
 
   // Run preflight check if --verify flag is specified
