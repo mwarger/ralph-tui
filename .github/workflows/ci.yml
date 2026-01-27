@@ -146,24 +146,34 @@ jobs:
 
       - name: Check coverage threshold
         run: |
-          # Calculate weighted average coverage from all batches
-          # Each batch reports coverage for files it loads, so we use the largest batch
-          # (tests/) as the primary indicator since it loads the most code paths
+          # Merge all batch lcov files into a single report for accurate coverage.
+          # Individual batches understate coverage because they instrument all loaded
+          # source files, not just the ones under test. Merging gives the true picture.
+          sudo apt-get install -y -qq lcov > /dev/null 2>&1
 
-          # Get coverage from tests/ batch (870 tests, most comprehensive)
-          TESTS_COV=$(grep -m1 "^All files" coverage-output.txt | awk '{print $4}' | tr -d '%' || echo "0")
+          MERGE_ARGS=""
+          for f in coverage-parts/*.lcov; do
+            if [ -f "$f" ]; then
+              MERGE_ARGS="$MERGE_ARGS --add-tracefile $f"
+            fi
+          done
 
-          echo "Coverage breakdown by batch:"
+          lcov $MERGE_ARGS --output-file coverage-parts/merged.lcov --ignore-errors inconsistent 2>/dev/null
+
+          # Extract line coverage percentage from the merged report
+          MERGED_COV=$(lcov --summary coverage-parts/merged.lcov 2>&1 | grep -i "lines" | head -1 | sed 's/.*:\s*\([0-9.]*\)%.*/\1/')
+
+          echo "Coverage breakdown by batch (% Funcs):"
           grep "^All files" coverage-output.txt | awk '{print "  " $4}'
           echo ""
-          echo "Primary coverage (tests/ batch with 870 tests): $TESTS_COV%"
+          echo "Merged line coverage (all batches): $MERGED_COV%"
 
           # Check if coverage is below 40%
-          if [ "$(echo "$TESTS_COV < 40" | bc -l)" -eq 1 ]; then
-            echo "❌ Coverage $TESTS_COV% is below 40% threshold"
+          if [ "$(echo "$MERGED_COV < 40" | bc -l)" -eq 1 ]; then
+            echo "❌ Coverage $MERGED_COV% is below 40% threshold"
             exit 1
           fi
-          echo "✅ Coverage $TESTS_COV% meets 40% threshold"
+          echo "✅ Coverage $MERGED_COV% meets 40% threshold"
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4
