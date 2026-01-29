@@ -6,17 +6,16 @@ This guide describes a **repeatable, idempotent** method for manually testing Ra
 
 ```bash
 # One-time setup (creates workspace in ~/.cache/ralph-tui/test-workspace)
-cd /path/to/ralph-tui/testing
-./setup-test-workspace.sh
+./testing/setup-test-workspace.sh
 
-# Run the test (use --cwd to specify workspace)
-ralph-tui run --prd testing/test-prd.json --cwd ~/.cache/ralph-tui/test-workspace
+# Run the test
+bun run dev -- run --prd testing/test-prd.json --cwd ~/.cache/ralph-tui/test-workspace
 
 # If something goes wrong, stop and reset
-./reset-test.sh
+./testing/reset-test.sh
 
 # Run again
-ralph-tui run --prd testing/test-prd.json --cwd ~/.cache/ralph-tui/test-workspace
+bun run dev -- run --prd testing/test-prd.json --cwd ~/.cache/ralph-tui/test-workspace
 ```
 
 ## Architecture
@@ -85,8 +84,7 @@ TEST-003 (P2) ──────────────────────
 ### 1. Initial Setup (One Time per Machine)
 
 ```bash
-cd /path/to/ralph-tui/testing
-./setup-test-workspace.sh
+./testing/setup-test-workspace.sh
 ```
 
 This creates:
@@ -98,10 +96,6 @@ This creates:
 ### 2. Running a Test
 
 ```bash
-# Option A: Using installed ralph-tui (from ralph-tui directory)
-ralph-tui run --prd testing/test-prd.json --cwd ~/.cache/ralph-tui/test-workspace
-
-# Option B: Using development build (from ralph-tui directory)
 bun run dev -- run --prd testing/test-prd.json --cwd ~/.cache/ralph-tui/test-workspace
 ```
 
@@ -146,15 +140,13 @@ To test error handling:
 
 **Soft Reset** (keeps git history):
 ```bash
-/path/to/ralph-tui/testing/reset-test.sh
+./testing/reset-test.sh
 ```
 
 **Hard Reset** (full clean slate):
 ```bash
-cd ~/.cache/ralph-tui/test-workspace
-git reset --hard test-start
-git clean -fd
-/path/to/ralph-tui/testing/reset-test.sh
+cd ~/.cache/ralph-tui/test-workspace && git reset --hard test-start && git clean -fd
+./testing/reset-test.sh
 ```
 
 ## Files Reference
@@ -217,11 +209,11 @@ cat testing/.test-workspace-path
 For automated testing in CI, you can run:
 
 ```bash
-# Setup (uses default location)
+# Setup
 ./testing/setup-test-workspace.sh
 
-# Run headless with max iterations (from ralph-tui directory)
-ralph-tui run --prd testing/test-prd.json --cwd ~/.cache/ralph-tui/test-workspace --headless --iterations 10
+# Run headless with max iterations
+bun run dev -- run --prd testing/test-prd.json --cwd ~/.cache/ralph-tui/test-workspace --headless --iterations 10
 
 # Verify completion
 jq '.userStories | all(.passes)' testing/test-prd.json
