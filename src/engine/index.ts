@@ -1944,6 +1944,14 @@ export class ExecutionEngine {
           iteration,
           error: result.error,
         });
+      } else if (result.skipReason) {
+        this.emit({
+          type: 'task:auto-commit-skipped',
+          timestamp: new Date().toISOString(),
+          task,
+          iteration,
+          reason: result.skipReason,
+        });
       }
     } catch (err) {
       this.emit({
