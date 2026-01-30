@@ -3,7 +3,7 @@
  * Tests template resolution hierarchy, installation, loading, and rendering.
  */
 
-import { describe, test, expect, beforeEach, afterEach, spyOn, beforeAll, mock } from 'bun:test';
+import { describe, test, expect, beforeEach, afterEach, afterAll, spyOn, beforeAll, mock } from 'bun:test';
 import { mkdir, rm, writeFile, readFile, chmod } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
@@ -631,9 +631,6 @@ describe('Template Engine - Installation', () => {
       expect(content).toBe('New content');
     });
 
-    // NOTE: These tests MUST run before installBuiltinTemplates below, which uses mock.module()
-    // that pollutes getUserConfigDir for subsequent tests. By placing them here, we ensure
-    // the spyOn(templateEngine, 'getUserConfigDir') works correctly.
     describe('Function Behavior (sandboxed)', () => {
       test('returns correct structure with templatesDir and results', () => {
         const templates = { 'test-tracker': '## Test Template' };
@@ -733,6 +730,10 @@ describe('Template Engine - Installation', () => {
 
       // Store the fresh function reference for this describe block
       freshInstallBuiltinTemplates = realTemplateEngine.installBuiltinTemplates;
+    });
+
+    afterAll(() => {
+      mock.restore();
     });
 
     test('installs all four builtin templates', () => {
