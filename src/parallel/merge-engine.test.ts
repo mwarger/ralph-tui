@@ -203,7 +203,7 @@ describe('MergeEngine', () => {
 
       expect(result).not.toBeNull();
       expect(result!.success).toBe(false);
-      expect(result!.error).toContain('no commits ahead');
+      expect(result!.error).toContain('No commits to merge');
     });
 
     test('emits merge lifecycle events (started, completed)', async () => {

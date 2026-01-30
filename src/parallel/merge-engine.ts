@@ -277,7 +277,8 @@ export class MergeEngine {
     if (!this.branchHasCommits(operation.sourceBranch)) {
       const result = this.failMerge(
         operation,
-        'Source branch has no commits ahead of HEAD',
+        'No commits to merge. The agent may have completed the task but created no committable files. ' +
+          'Common cause: output files are in .gitignore.',
         startTime
       );
       return result;
