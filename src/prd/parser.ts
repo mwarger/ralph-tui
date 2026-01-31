@@ -47,7 +47,7 @@ export interface ParseOptions {
  * - EPIC-123: Custom prefix format
  * - Feature 1.1: Feature version format
  */
-const USER_STORY_HEADER_PATTERN = /^#{2,4}\s+(US-\d{3}|US-\d+(?:\.\d+)+|[A-Z]+-\d+|Feature\s+\d+\.\d+):\s*(.+)$/;
+const USER_STORY_HEADER_PATTERN = /^#{2,4}\s+(US-\d{3}|US-\d+(?:\.\d+)+|(?!US-)[A-Z]+-\d+|Feature\s+\d+\.\d+):\s*(.+)$/;
 
 /**
  * Fallback pattern to match ANY header with a colon in the User Stories section.
@@ -338,7 +338,10 @@ function extractStoryDescription(section: string, headerLine: string): string {
 
 /**
  * Find all user story sections in the markdown.
- * First tries strict patterns, then falls back to any header with colon in User Stories section.
+ * Uses a 3-tier fallback strategy to ALWAYS find something:
+ * 1. Strict patterns (US-XXX, US-X.Y.Z, PREFIX-XXX, Feature X.Y)
+ * 2. Any header with colon in "User Stories" section
+ * 3. Ultimate fallback: ANY H2/H3/H4 with colon in entire document
  */
 function findUserStorySections(markdown: string): Array<{ id: string; title: string; section: string }> {
   // First try with strict patterns
@@ -347,8 +350,14 @@ function findUserStorySections(markdown: string): Array<{ id: string; title: str
     return strictSections;
   }
 
-  // Fallback: find any headers in User Stories section
-  return findUserStorySectionsFallback(markdown);
+  // Second fallback: find any headers in User Stories section
+  const fallbackSections = findUserStorySectionsFallback(markdown);
+  if (fallbackSections.length > 0) {
+    return fallbackSections;
+  }
+
+  // Ultimate fallback: find ANY headers with colons in the entire document
+  return findUserStorySectionsUltimate(markdown);
 }
 
 /**
@@ -419,11 +428,12 @@ function findUserStorySectionsFallback(markdown: string): Array<{ id: string; ti
       continue;
     }
 
-    // Check if we're leaving User Stories section (next H1 or H2 that's not a story)
+    // Check if we're leaving User Stories section (any H1 or H2 that's not a story header)
     if (inUserStoriesSection && /^#{1,2}\s+/.test(line)) {
-      // Check for common non-story section headers
-      const isNonStorySection = /^#{1,2}\s+(?:\d+\.\s+)?(?:Technical|Technikai|Requirements|Követelmények|Implementation|Implementáció|Testing|Tesztelés|Documentation|Dokumentáció|Risk|Kockázat|Timeline|Ütemezés|Dependencies|Függőségek|Appendix|Függelék|Release|Kiadás|Acceptance|Elfogadás)/i.test(line);
-      if (isNonStorySection) {
+      // Check if this H1/H2 looks like a story header (has colon format)
+      const looksLikeStory = FALLBACK_STORY_HEADER_PATTERN.test(line);
+      if (!looksLikeStory) {
+        // Not a story header - we've left the User Stories section
         // Save last story and exit
         if (currentStory) {
           const sectionLines = lines.slice(currentStory.startIndex, i);
@@ -459,7 +469,87 @@ function findUserStorySectionsFallback(markdown: string): Array<{ id: string; ti
 
       // Try to use the prefix as ID if it looks like one, otherwise generate
       let id: string;
-      if (/^[A-Z]+-\d+|^US-|^Feature\s+\d/i.test(prefix)) {
+      // Match valid ID formats:
+      // - US-XXX (exactly 3 digits) or US-X.Y.Z (version style)
+      // - Non-US prefix with digits (EPIC-1, TASK-123)
+      // - Feature X.Y format
+      const validIdPattern = /^US-\d{3}$|^US-\d+(?:\.\d+)+$|^(?!US-)[A-Z]+-\d+$|^Feature\s+\d+\.\d+$/i;
+      if (validIdPattern.test(prefix)) {
+        id = normalizeStoryId(prefix);
+      } else {
+        id = `STORY-${String(storyCounter).padStart(3, '0')}`;
+      }
+
+      currentStory = {
+        id,
+        title: title || prefix,
+        startIndex: i,
+      };
+    }
+  }
+
+  // Don't forget the last story
+  if (currentStory) {
+    const sectionLines = lines.slice(currentStory.startIndex);
+    sections.push({
+      id: currentStory.id,
+      title: currentStory.title,
+      section: sectionLines.join('\n'),
+    });
+  }
+
+  return sections;
+}
+
+/**
+ * Ultimate fallback: Find ANY H2/H3/H4 headers with colons in the entire document.
+ * This ensures we ALWAYS generate some stories, even from non-standard PRDs.
+ * Skips common non-story headers like "Overview:", "Description:", etc.
+ */
+function findUserStorySectionsUltimate(markdown: string): Array<{ id: string; title: string; section: string }> {
+  const sections: Array<{ id: string; title: string; section: string }> = [];
+  const lines = markdown.split('\n');
+
+  let storyCounter = 0;
+  let currentStory: { id: string; title: string; startIndex: number } | null = null;
+
+  // Headers to skip (common section headers, not stories)
+  const skipHeaders = /^#{1,4}\s*(?:Overview|Description|Summary|Introduction|Background|Goals|Objectives|Requirements|Technical|Implementation|Architecture|Design|Testing|Documentation|Appendix|References|Glossary|Changelog|Notes|Risks|Timeline|Dependencies|Constraints|Assumptions|Scope|Összefoglaló|Leírás|Célok|Követelmények|Technikai|Implementáció|Tesztelés|Dokumentáció):/i;
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i] ?? '';
+
+    // Skip the title (H1)
+    if (/^#\s+/.test(line) && !/^##/.test(line)) {
+      continue;
+    }
+
+    // Skip known non-story headers
+    if (skipHeaders.test(line)) {
+      continue;
+    }
+
+    // Match any H2/H3/H4 with colon
+    const match = line.match(/^(#{2,4})\s+(.+?):\s*(.+)$/);
+    if (match) {
+      // Save previous story section
+      if (currentStory) {
+        const sectionLines = lines.slice(currentStory.startIndex, i);
+        sections.push({
+          id: currentStory.id,
+          title: currentStory.title,
+          section: sectionLines.join('\n'),
+        });
+      }
+
+      storyCounter++;
+      const prefix = match[2]?.trim() ?? '';
+      const title = match[3]?.trim() ?? '';
+
+      // Try to use prefix as ID if it looks like one
+      let id: string;
+      const validIdPattern = /^US-\d{3}$|^US-\d+(?:\.\d+)+$|^(?!US-)[A-Z]+-\d+$|^Feature\s+\d+\.\d+$/i;
+      if (validIdPattern.test(prefix)) {
         id = normalizeStoryId(prefix);
       } else {
         id = `STORY-${String(storyCounter).padStart(3, '0')}`;

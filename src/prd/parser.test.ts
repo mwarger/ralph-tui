@@ -752,4 +752,247 @@ As a developer, I want match/case statement support.
       expect(result.userStories[0]!.id).toBe('US-001');
     });
   });
+
+  describe('US- prefix exclusion from generic pattern', () => {
+    test('US-1 and US-9999 are not matched by strict pattern (use fallback)', () => {
+      const md = `# PRD: Invalid US Format Test
+
+## User Stories
+
+### US-1: Single digit (invalid)
+
+**Acceptance Criteria:**
+- [ ] Works
+
+### US-9999: Four digits (invalid)
+
+**Acceptance Criteria:**
+- [ ] Works
+`;
+
+      const result = parsePrdMarkdown(md);
+      // These don't match strict US-XXX (3 digits), so fallback generates STORY-XXX
+      expect(result.userStories.length).toBeGreaterThanOrEqual(2);
+      expect(result.userStories[0]!.id).toBe('STORY-001');
+      expect(result.userStories[1]!.id).toBe('STORY-002');
+    });
+
+    test('EPIC-1 and TASK-9999 are still matched by generic pattern', () => {
+      const md = `# PRD: Non-US Prefix Test
+
+## User Stories
+
+### EPIC-1: Single digit non-US prefix
+
+**Acceptance Criteria:**
+- [ ] Works
+
+### TASK-9999: Many digits non-US prefix
+
+**Acceptance Criteria:**
+- [ ] Works
+`;
+
+      const result = parsePrdMarkdown(md);
+      expect(result.userStories).toHaveLength(2);
+      // Non-US prefixes are matched by the generic [A-Z]+-\d+ pattern
+      expect(result.userStories[0]!.id).toBe('EPIC-1');
+      expect(result.userStories[1]!.id).toBe('TASK-9999');
+    });
+
+    test('US-001 is still matched correctly (exactly 3 digits)', () => {
+      const md = `# PRD: Valid US Format Test
+
+## User Stories
+
+### US-001: Exactly three digits
+
+**Acceptance Criteria:**
+- [ ] Works
+
+### US-999: Max three digits
+
+**Acceptance Criteria:**
+- [ ] Works
+`;
+
+      const result = parsePrdMarkdown(md);
+      expect(result.userStories).toHaveLength(2);
+      expect(result.userStories[0]!.id).toBe('US-001');
+      expect(result.userStories[1]!.id).toBe('US-999');
+    });
+
+    test('US-X.Y.Z version format still works', () => {
+      const md = `# PRD: US Version Format Test
+
+## User Stories
+
+### US-2.1: Two-part version
+
+**Acceptance Criteria:**
+- [ ] Works
+
+### US-2.1.1: Three-part version
+
+**Acceptance Criteria:**
+- [ ] Works
+`;
+
+      const result = parsePrdMarkdown(md);
+      expect(result.userStories).toHaveLength(2);
+      expect(result.userStories[0]!.id).toBe('US-2.1');
+      expect(result.userStories[1]!.id).toBe('US-2.1.1');
+    });
+  });
+
+  describe('Ultimate fallback - ALWAYS generates JSON', () => {
+    test('parses PRD without User Stories section', () => {
+      const md = `# My Project PRD
+
+## Introduction
+
+Some intro text.
+
+## Feature 1: Login System
+
+Users should be able to log in.
+
+- [ ] Email login
+- [ ] Password validation
+
+## Feature 2: Dashboard
+
+Users see a dashboard after login.
+
+- [ ] Show stats
+- [ ] Recent activity
+`;
+
+      const result = parsePrdMarkdown(md);
+      // Should find Feature 1 and Feature 2 via ultimate fallback
+      expect(result.userStories.length).toBeGreaterThanOrEqual(2);
+    });
+
+    test('parses completely non-standard PRD', () => {
+      const md = `# Random Document
+
+## Section A: First Thing
+
+Do the first thing.
+
+**Criteria:**
+- [ ] Done
+
+## Section B: Second Thing
+
+Do the second thing.
+
+**Criteria:**
+- [ ] Done
+`;
+
+      const result = parsePrdMarkdown(md);
+      // Should still find stories via ultimate fallback
+      expect(result.userStories.length).toBeGreaterThanOrEqual(2);
+      expect(result.userStories[0]!.id).toBe('STORY-001');
+      expect(result.userStories[0]!.title).toBe('First Thing');
+    });
+
+    test('skips common non-story headers', () => {
+      const md = `# PRD
+
+## Overview: Project Summary
+
+This is the overview.
+
+## Task 1: Implement Feature
+
+Do the feature.
+
+- [ ] Done
+
+## Technical: Architecture Notes
+
+Architecture details here.
+`;
+
+      const result = parsePrdMarkdown(md);
+      // Should skip Overview and Technical, only find Task 1
+      expect(result.userStories).toHaveLength(1);
+      expect(result.userStories[0]!.title).toBe('Implement Feature');
+    });
+  });
+
+  describe('Parser exit on unknown H1/H2 headers', () => {
+    test('stops parsing on unknown H2 section (## Architecture)', () => {
+      const md = `# PRD: Test
+
+## User Stories
+
+### US-001: First Story
+
+**Acceptance Criteria:**
+- [ ] Works
+
+## Architecture
+
+This section should not be parsed as a story.
+
+### Some: Header With Colon
+
+This should not be matched.
+`;
+
+      const result = parsePrdMarkdown(md);
+      expect(result.userStories).toHaveLength(1);
+      expect(result.userStories[0]!.id).toBe('US-001');
+    });
+
+    test('stops parsing on unknown H1 section', () => {
+      const md = `# PRD: Test
+
+## User Stories
+
+### US-001: First Story
+
+**Acceptance Criteria:**
+- [ ] Works
+
+# Appendix
+
+### Something: Else
+
+Should not be parsed.
+`;
+
+      const result = parsePrdMarkdown(md);
+      expect(result.userStories).toHaveLength(1);
+      expect(result.userStories[0]!.id).toBe('US-001');
+    });
+
+    test('continues parsing H3/H4 story headers after H2 stories', () => {
+      const md = `# PRD: Test
+
+## User Stories
+
+## US-001: H2 Story
+
+**Acceptance Criteria:**
+- [ ] Works
+
+### US-002: H3 Story
+
+**Acceptance Criteria:**
+- [ ] Works
+
+#### US-003: H4 Story
+
+**Acceptance Criteria:**
+- [ ] Works
+`;
+
+      const result = parsePrdMarkdown(md);
+      expect(result.userStories).toHaveLength(3);
+    });
+  });
 });
