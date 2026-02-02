@@ -1337,6 +1337,14 @@ export function RunApp({
     }
   }, [currentTaskId]);
 
+  // Auto-show conflict panel when conflicts are detected in parallel mode
+  useEffect(() => {
+    if (isParallelMode && parallelConflicts.length > 0) {
+      setShowConflictPanel(true);
+      setConflictSelectedIndex(0);
+    }
+  }, [isParallelMode, parallelConflicts]);
+
   // Calculate the number of items in iteration history (iterations + pending)
   const iterationHistoryLength = Math.max(iterations.length, totalIterations);
 
@@ -1629,7 +1637,7 @@ export function RunApp({
           break;
 
         case 'enter':
-        case 'return':
+        case 'return': {
           // In parallel overview, Enter drills into worker detail
           if (viewMode === 'parallel-overview' && parallelWorkers.length > 0) {
             setViewMode('parallel-detail');
@@ -1646,6 +1654,7 @@ export function RunApp({
             break;
           }
           break;
+        }
 
         case 'd':
           // Toggle dashboard visibility

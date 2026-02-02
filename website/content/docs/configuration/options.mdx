@@ -424,14 +424,15 @@ Configure automatic parallel execution behavior.
 [parallel]
 mode = "auto"
 maxWorkers = 3
-worktreeDir = ".ralph-tui/worktrees"
+directMerge = false
 ```
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `mode` | string | `"auto"` | Execution mode |
 | `maxWorkers` | number | `3` | Maximum concurrent workers |
-| `worktreeDir` | string | `".ralph-tui/worktrees"` | Directory for git worktrees |
+| `directMerge` | boolean | `false` | Merge directly to current branch (vs session branch) |
+| `worktreeDir` | string | `"../.ralph-worktrees/<project>"` | Directory for git worktrees |
 
 ### Mode Values
 
@@ -448,6 +449,7 @@ worktreeDir = ".ralph-tui/worktrees"
 | `--serial`, `--sequential` | Force sequential (overrides config) |
 | `--parallel` | Force parallel with default workers |
 | `--parallel N` | Force parallel with N workers |
+| `--direct-merge` | Merge directly to current branch |
 
 See the [Parallel Execution guide](/docs/parallel/overview) for detailed documentation.
 

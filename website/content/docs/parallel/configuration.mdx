@@ -15,7 +15,7 @@ Add a `[parallel]` section to your `.ralph-tui/config.toml`:
 [parallel]
 mode = "auto"                           # auto | always | never
 maxWorkers = 3                          # Maximum concurrent workers
-worktreeDir = ".ralph-tui/worktrees"    # Directory for git worktrees
+directMerge = false                     # Merge directly to current branch (vs session branch)
 ```
 
 ### Options
@@ -24,7 +24,8 @@ worktreeDir = ".ralph-tui/worktrees"    # Directory for git worktrees
 |--------|------|---------|-------------|
 | `mode` | string | `"auto"` | Execution mode: `auto` analyzes dependencies, `always` forces parallel, `never` disables |
 | `maxWorkers` | number | `3` | Maximum concurrent workers (worktrees) |
-| `worktreeDir` | string | `".ralph-tui/worktrees"` | Directory for git worktrees relative to project root |
+| `directMerge` | boolean | `false` | If true, merge directly to current branch; if false (default), create a session branch |
+| `worktreeDir` | string | `"../.ralph-worktrees/<project>"` | Directory for git worktrees (as sibling of project) |
 
 ### Mode Behavior
 
@@ -57,6 +58,7 @@ ralph-tui run --parallel 4
 | `--serial`, `--sequential` | Force sequential execution (overrides config) |
 | `--parallel` | Force parallel execution with default worker count |
 | `--parallel N` | Force parallel execution with N workers |
+| `--direct-merge` | Merge directly to current branch instead of creating a session branch |
 
 <Callout type="info">
   When both `--serial` and `--parallel` are specified, `--serial` takes precedence.

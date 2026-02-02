@@ -269,7 +269,7 @@ describe('WorktreeManager', () => {
     test('uses default worktree directory when not specified', () => {
       const defaultManager = new WorktreeManager({ cwd: repoDir });
       // Internal config is private, but we can test behavior by acquiring
-      // (it would use .ralph-tui/worktrees by default)
+      // (it would use ../.ralph-worktrees/<project-name> by default)
       expect(defaultManager).toBeTruthy();
     });
   });

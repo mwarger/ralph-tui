@@ -591,9 +591,9 @@ export class ParallelExecutor {
       };
     });
 
-    // Release worktrees
+    // Release worktrees (use "worker-" prefix to match acquire's worktreeId format)
     for (const worker of this.activeWorkers) {
-      this.worktreeManager.release(worker.id);
+      this.worktreeManager.release(`worker-${worker.id}`);
     }
 
     this.completedResults.push(...workerResults);

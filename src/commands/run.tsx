@@ -1476,7 +1476,7 @@ async function runParallelWithTui(
         parallelState.mergeQueue = [...parallelExecutor.getState().mergeQueue];
         break;
 
-      case 'merge:completed':
+      case 'merge:completed': {
         // Refresh merge queue from executor state
         parallelState.mergeQueue = [...parallelExecutor.getState().mergeQueue];
         // Task successfully merged — remove from completedLocally set (it's now fully done)
@@ -1490,6 +1490,7 @@ async function runParallelWithTui(
           event.taskId,
         ]);
         break;
+      }
 
       case 'merge:failed':
       case 'merge:rolled-back':
@@ -1668,9 +1669,10 @@ async function runParallelWithTui(
         }}
         onParallelStart={() => {
           // Reset executor state and re-run
+          // Use new instances instead of .clear() so React detects state changes
           parallelState.workers = [];
-          parallelState.workerOutputs.clear();
-          parallelState.taskIdToWorkerId.clear();
+          parallelState.workerOutputs = new Map();
+          parallelState.taskIdToWorkerId = new Map();
           parallelExecutor.reset();
           parallelExecutor.execute().then(() => {
             triggerRerender?.();

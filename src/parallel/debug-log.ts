@@ -5,7 +5,7 @@
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { execSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 
 let logFile: string | null = null;
 let logEnabled = false;
@@ -58,9 +58,10 @@ export function logGitStatus(category: string, cwd: string, context: string): vo
   if (!logEnabled) return;
 
   try {
-    const status = execSync('git status --porcelain', { cwd, encoding: 'utf-8', timeout: 5000 });
-    const branch = execSync('git branch --show-current', { cwd, encoding: 'utf-8', timeout: 5000 }).trim();
-    const head = execSync('git rev-parse --short HEAD', { cwd, encoding: 'utf-8', timeout: 5000 }).trim();
+    // Use execFileSync with argument arrays for security consistency
+    const status = execFileSync('git', ['status', '--porcelain'], { cwd, encoding: 'utf-8', timeout: 5000 });
+    const branch = execFileSync('git', ['branch', '--show-current'], { cwd, encoding: 'utf-8', timeout: 5000 }).trim();
+    const head = execFileSync('git', ['rev-parse', '--short', 'HEAD'], { cwd, encoding: 'utf-8', timeout: 5000 }).trim();
 
     debugLog(category, `Git status for ${context}`, {
       cwd,
@@ -95,7 +96,8 @@ export function logWorktreeInfo(category: string, mainCwd: string): void {
   if (!logEnabled) return;
 
   try {
-    const worktrees = execSync('git worktree list', { cwd: mainCwd, encoding: 'utf-8', timeout: 5000 });
+    // Use execFileSync with argument arrays for security consistency
+    const worktrees = execFileSync('git', ['worktree', 'list'], { cwd: mainCwd, encoding: 'utf-8', timeout: 5000 });
     debugLog(category, 'Worktree list', {
       mainCwd,
       worktrees: worktrees.trim().split('\n'),
@@ -115,19 +117,20 @@ export function logBranchCommits(category: string, mainCwd: string, branchName: 
   if (!logEnabled) return;
 
   try {
-    const count = execSync(`git rev-list --count HEAD..${branchName}`, {
+    // Use execFileSync with argument arrays to prevent command injection
+    const count = execFileSync('git', ['rev-list', '--count', `HEAD..${branchName}`], {
       cwd: mainCwd,
       encoding: 'utf-8',
       timeout: 5000
     }).trim();
 
-    const branchHead = execSync(`git rev-parse --short ${branchName}`, {
+    const branchHead = execFileSync('git', ['rev-parse', '--short', branchName], {
       cwd: mainCwd,
       encoding: 'utf-8',
       timeout: 5000,
     }).trim();
 
-    const mainHead = execSync('git rev-parse --short HEAD', {
+    const mainHead = execFileSync('git', ['rev-parse', '--short', 'HEAD'], {
       cwd: mainCwd,
       encoding: 'utf-8',
       timeout: 5000,
