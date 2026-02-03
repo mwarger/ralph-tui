@@ -4,7 +4,7 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach, mock, spyOn } from 'bun:test';
-import { parseRunArgs, printRunHelp } from '../../src/commands/run.jsx';
+import { parseRunArgs, printRunHelp, isSessionComplete } from '../../src/commands/run.jsx';
 
 describe('run command', () => {
   describe('parseRunArgs', () => {
@@ -448,6 +448,143 @@ describe('run command', () => {
       const output = consoleErrorOutput.join('\n');
       expect(output).toContain('ralph-tui convert --to json --input ./docs/feature.md');
       expect(output).toContain('ralph-tui convert --to beads --input ./docs/feature.md');
+    });
+  });
+
+  /**
+   * Tests for isSessionComplete function.
+   * See: https://github.com/subsy/ralph-tui/issues/247
+   *
+   * Session completion is determined solely by task counts, not engine status.
+   * The engine status is always 'idle' after runLoop exits (set in finally block),
+   * so using it for completion detection causes incorrect behavior.
+   *
+   * Correct: tasksCompleted >= totalTasks
+   * Incorrect: tasksCompleted >= totalTasks || status === 'idle'
+   */
+  describe('isSessionComplete (issue #247)', () => {
+    describe('sequential mode (parallelAllComplete is null)', () => {
+      test('returns false when 0 tasks completed out of 5', () => {
+        expect(isSessionComplete(null, 0, 5)).toBe(false);
+      });
+
+      test('returns false when 1 task completed out of 5', () => {
+        expect(isSessionComplete(null, 1, 5)).toBe(false);
+      });
+
+      test('returns false when 3 tasks completed out of 5', () => {
+        expect(isSessionComplete(null, 3, 5)).toBe(false);
+      });
+
+      test('returns false when 4 tasks completed out of 5 (one remaining)', () => {
+        expect(isSessionComplete(null, 4, 5)).toBe(false);
+      });
+
+      test('returns false when 108 tasks completed out of 130', () => {
+        // Scenario from issue #247: session shows 108/130 but should not be "complete"
+        expect(isSessionComplete(null, 108, 130)).toBe(false);
+      });
+
+      test('returns true when 5 tasks completed out of 5', () => {
+        expect(isSessionComplete(null, 5, 5)).toBe(true);
+      });
+
+      test('returns true when more tasks completed than total (edge case)', () => {
+        // Edge case: if somehow tasksCompleted exceeds totalTasks, treat as complete
+        expect(isSessionComplete(null, 6, 5)).toBe(true);
+      });
+
+      test('returns true when 0 tasks out of 0 (empty project)', () => {
+        // Edge case: no tasks means nothing to do, so complete
+        expect(isSessionComplete(null, 0, 0)).toBe(true);
+      });
+
+      test('returns true when 1 task completed out of 1', () => {
+        expect(isSessionComplete(null, 1, 1)).toBe(true);
+      });
+
+      test('returns false when 0 tasks completed out of 1', () => {
+        expect(isSessionComplete(null, 0, 1)).toBe(false);
+      });
+
+      test('handles large task counts correctly', () => {
+        expect(isSessionComplete(null, 999, 1000)).toBe(false);
+        expect(isSessionComplete(null, 1000, 1000)).toBe(true);
+        expect(isSessionComplete(null, 1001, 1000)).toBe(true);
+      });
+
+      test('completion is based on task counts, not engine status', () => {
+        // Key invariant: engine status is irrelevant to completion detection.
+        // The engine status is always 'idle' after runLoop exits (finally block),
+        // regardless of why execution stopped (user quit, max iterations, completion).
+        const tasksCompleted = 3;
+        const totalTasks = 5;
+
+        // Correct behavior: incomplete tasks means session is not complete
+        expect(isSessionComplete(null, tasksCompleted, totalTasks)).toBe(false);
+
+        // Demonstrate why checking engine status causes incorrect behavior:
+        // status === 'idle' is always true after engine stops, so this logic
+        // incorrectly marks sessions as complete even with incomplete tasks
+        const engineStatus = 'idle';
+        const incorrectLogic = tasksCompleted >= totalTasks || engineStatus === 'idle';
+        expect(incorrectLogic).toBe(true); // Incorrectly returns true!
+      });
+    });
+
+    describe('parallel mode (parallelAllComplete is set)', () => {
+      test('uses parallelAllComplete=true even when task counts suggest incomplete', () => {
+        // Parallel executor says complete, even though counts show 0/10
+        expect(isSessionComplete(true, 0, 10)).toBe(true);
+      });
+
+      test('uses parallelAllComplete=false even when task counts suggest complete', () => {
+        // Parallel executor says incomplete, even though counts show 10/10
+        expect(isSessionComplete(false, 10, 10)).toBe(false);
+      });
+
+      test('parallelAllComplete=true with matching counts', () => {
+        expect(isSessionComplete(true, 5, 5)).toBe(true);
+      });
+
+      test('parallelAllComplete=false with incomplete counts', () => {
+        expect(isSessionComplete(false, 3, 5)).toBe(false);
+      });
+
+      test('parallelAllComplete=true with zero tasks', () => {
+        expect(isSessionComplete(true, 0, 0)).toBe(true);
+      });
+
+      test('parallelAllComplete=false with zero tasks', () => {
+        expect(isSessionComplete(false, 0, 0)).toBe(false);
+      });
+
+      test('parallelAllComplete overrides task count logic completely', () => {
+        // When parallel mode sets a value, task counts are ignored
+        expect(isSessionComplete(true, 0, 100)).toBe(true);
+        expect(isSessionComplete(true, 50, 100)).toBe(true);
+        expect(isSessionComplete(true, 100, 100)).toBe(true);
+        expect(isSessionComplete(false, 0, 100)).toBe(false);
+        expect(isSessionComplete(false, 50, 100)).toBe(false);
+        expect(isSessionComplete(false, 100, 100)).toBe(false);
+      });
+    });
+
+    describe('nullish coalescing behavior', () => {
+      test('null triggers fallback to task count check', () => {
+        expect(isSessionComplete(null, 5, 5)).toBe(true);
+        expect(isSessionComplete(null, 4, 5)).toBe(false);
+      });
+
+      test('boolean false does NOT trigger fallback', () => {
+        // false is not nullish, so it does not fall through to task count check
+        expect(isSessionComplete(false, 5, 5)).toBe(false);
+      });
+
+      test('boolean true does NOT trigger fallback', () => {
+        // true is not nullish, so it does not fall through to task count check
+        expect(isSessionComplete(true, 0, 5)).toBe(true);
+      });
     });
   });
 });

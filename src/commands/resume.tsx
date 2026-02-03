@@ -17,6 +17,8 @@ import {
   pauseSession,
   updateSessionAfterIteration,
   setSubagentPanelVisible,
+  addActiveTask,
+  removeActiveTask,
   acquireLock,
   releaseLock,
   checkSession,
@@ -41,7 +43,28 @@ import { registerBuiltinAgents } from '../plugins/agents/builtin/index.js';
 import { registerBuiltinTrackers } from '../plugins/trackers/builtin/index.js';
 import { getAgentRegistry } from '../plugins/agents/registry.js';
 import { getTrackerRegistry } from '../plugins/trackers/registry.js';
+import type { TrackerTask } from '../plugins/trackers/types.js';
 import { RunApp } from '../tui/components/RunApp.js';
+
+/**
+ * Check if there's a mismatch between tracker state and session state.
+ *
+ * Returns true if the engine reports 0 tasks but the session has task history,
+ * indicating the tracker cannot find the expected tasks (e.g., wrong epicId,
+ * missing prdPath file, or database state mismatch).
+ *
+ * See: https://github.com/subsy/ralph-tui/issues/247
+ *
+ * @param engineTotalTasks - Number of tasks loaded by the tracker
+ * @param sessionTotalTasks - Number of tasks recorded in the session
+ * @returns true if a warning should be shown about tracker/session mismatch
+ */
+export function shouldWarnAboutTrackerMismatch(
+  engineTotalTasks: number,
+  sessionTotalTasks: number
+): boolean {
+  return engineTotalTasks === 0 && sessionTotalTasks > 0;
+}
 
 /**
  * Parsed resume command arguments
@@ -288,6 +311,7 @@ async function runWithTui(
   engine: ExecutionEngine,
   cwd: string,
   initialState: PersistedSessionState,
+  initialTasks: TrackerTask[],
   trackerType?: string,
   currentModel?: string
 ): Promise<PersistedSessionState> {
@@ -299,10 +323,26 @@ async function runWithTui(
 
   const root = createRoot(renderer);
 
-  // Subscribe to engine events to save state
+  // Subscribe to engine events to save state and track active tasks
   engine.on((event) => {
     if (event.type === 'iteration:completed') {
       currentState = updateSessionAfterIteration(currentState, event.result);
+      // If task was completed, remove it from active tasks
+      if (event.result.taskCompleted) {
+        currentState = removeActiveTask(currentState, event.result.task.id);
+      }
+      savePersistedSession(currentState).catch(() => {
+        // Log but don't fail on save errors
+      });
+    } else if (event.type === 'task:activated') {
+      // Track task as active when set to in_progress
+      currentState = addActiveTask(currentState, event.task.id);
+      savePersistedSession(currentState).catch(() => {
+        // Log but don't fail on save errors
+      });
+    } else if (event.type === 'task:completed') {
+      // Task completed - remove from active tasks
+      currentState = removeActiveTask(currentState, event.task.id);
       savePersistedSession(currentState).catch(() => {
         // Log but don't fail on save errors
       });
@@ -346,10 +386,21 @@ async function runWithTui(
     });
   };
 
+  let engineStarted = false;
+  const handleStart = async (): Promise<void> => {
+    if (engineStarted) return;
+    engineStarted = true;
+    // Start the engine in the background (this runs the loop)
+    engine.start().catch((error) => {
+      console.error('Engine error:', error);
+    });
+  };
+
   root.render(
     <RunApp
       engine={engine}
       cwd={cwd}
+      initialTasks={initialTasks}
       onQuit={async () => {
         // Save interrupted state
         currentState = { ...currentState, status: 'interrupted' };
@@ -357,6 +408,7 @@ async function runWithTui(
         await cleanup();
         process.exit(0);
       }}
+      onStart={handleStart}
       trackerType={trackerType}
       initialSubagentPanelVisible={initialState.subagentPanelVisible ?? false}
       onSubagentPanelVisibilityChange={handleSubagentPanelVisibilityChange}
@@ -364,9 +416,18 @@ async function runWithTui(
     />
   );
 
-  await engine.start();
-  await cleanup();
-  return currentState;
+  // Auto-start the engine after a short delay to let the TUI render
+  setTimeout(() => {
+    if (!engineStarted) {
+      handleStart();
+    }
+  }, 100);
+
+  // The engine runs in the background, TUI handles user interaction
+  // This function won't return until the process exits via onQuit or signal handlers
+  return new Promise<PersistedSessionState>(() => {
+    // Never resolves - process will exit via cleanup handlers
+  });
 }
 
 /**
@@ -603,6 +664,24 @@ export async function executeResumeCommand(args: string[]): Promise<void> {
     process.exit(1);
   }
 
+  // Validate tracker state matches session expectations
+  const engineState = engine.getState();
+  const sessionTotalTasks = resumedState.trackerState.totalTasks;
+  if (shouldWarnAboutTrackerMismatch(engineState.totalTasks, sessionTotalTasks)) {
+    console.warn('\nWarning: Session has task history but tracker returned no tasks.');
+    console.warn('This may happen if:');
+    if (resumedState.trackerState.epicId) {
+      console.warn(`  - The epic ID "${resumedState.trackerState.epicId}" no longer exists`);
+    }
+    if (resumedState.trackerState.prdPath) {
+      console.warn(`  - The PRD file "${resumedState.trackerState.prdPath}" is missing or empty`);
+    }
+    console.warn('\nTo fix, provide the tracker source explicitly:');
+    console.warn('  ralph-tui run --prd <path-to-prd.json>');
+    console.warn('  ralph-tui run --epic <epic-id>');
+    console.warn('');
+  }
+
   // Restore engine state from persisted session
   // The engine will start fresh but the session tracks what was already done
   // Task statuses are read from the tracker which should be in sync
@@ -611,7 +690,17 @@ export async function executeResumeCommand(args: string[]): Promise<void> {
   let finalState: PersistedSessionState;
   try {
     if (!headless && config.showTui) {
-      finalState = await runWithTui(engine, cwd, resumedState, config.tracker.plugin, config.model);
+      // Load tasks from tracker (only for TUI mode to avoid unnecessary latency in headless)
+      let tasks: TrackerTask[] = [];
+      try {
+        const trackerRegistry = getTrackerRegistry();
+        const tracker = await trackerRegistry.getInstance(config.tracker);
+        tasks = await tracker.getTasks({ status: ['open', 'in_progress', 'completed'] });
+      } catch (error) {
+        console.error('Warning: Failed to load tasks:', error);
+      }
+
+      finalState = await runWithTui(engine, cwd, resumedState, tasks, config.tracker.plugin, config.model);
     } else {
       finalState = await runHeadless(engine, cwd, resumedState);
     }
