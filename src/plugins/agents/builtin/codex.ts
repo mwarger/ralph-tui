@@ -311,16 +311,18 @@ export class CodexAgentPlugin extends BaseAgentPlugin {
     const args: string[] = [];
 
     // --full-auto forces workspace-write; use approval flag when sandbox is customized.
-    if (this.fullAuto) {
-      if (this.sandbox === 'workspace-write') {
-        args.push('--full-auto');
-      } else {
-        preArgs.push('-a', 'on-request');
-      }
+    // -a is a global flag (must come before exec), --full-auto is a subcommand flag (after exec).
+    if (this.fullAuto && this.sandbox !== 'workspace-write') {
+      preArgs.push('-a', 'on-request');
     }
 
     // Use exec subcommand for non-interactive mode
     args.push('exec');
+
+    // --full-auto is a subcommand flag, must come after exec
+    if (this.fullAuto && this.sandbox === 'workspace-write') {
+      args.push('--full-auto');
+    }
 
     // Always use JSON format for output parsing
     // This gives us structured events (text, tool_use, etc.) that we can format nicely
