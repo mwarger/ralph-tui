@@ -358,7 +358,7 @@ describe('ConflictResolver', () => {
     test('accepts valid branch names', async () => {
       const resolver = new ConflictResolver('/tmp/test-repo');
 
-      // These should NOT throw on validation (will fail later on git command)
+      // These branch names should pass validation; git execution may still fail
       const validBranches = [
         'main',
         'feature/new-feature',
@@ -371,11 +371,11 @@ describe('ConflictResolver', () => {
         const operation = mockMergeOperation('T1', ['file.ts']);
         operation.sourceBranch = branch;
 
-        // Should not throw validation error - will fail on git execution instead
+        // Validation should pass; any failures are git-related, not validation errors
         try {
           await resolver.resolveConflicts(operation);
         } catch (err) {
-          // Expected to fail on git execution, not on validation
+          // Git execution errors are expected; validation errors are not
           const error = err as Error;
           expect(error.message).not.toContain('Invalid git ref');
         }

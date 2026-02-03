@@ -248,11 +248,10 @@ describe('session state updates', () => {
     const graph = createMockGraph(['A', 'B', 'C']);
     let session = createParallelSession('preserve-test', graph, 'tag');
 
-    // First update some other properties
+    // Update other properties via updateSessionAfterGroup and markTaskRequeued,
+    // then apply branch info via updateSessionWithBranch
     session = updateSessionAfterGroup(session, 0, ['A'], ['B']);
     session = markTaskRequeued(session, 'C');
-
-    // Then update with branch info
     const updated = updateSessionWithBranch(session, 'ralph-session/xyz', 'develop');
 
     // Branch properties should be set
