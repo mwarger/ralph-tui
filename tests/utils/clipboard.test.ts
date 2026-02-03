@@ -87,7 +87,7 @@ let writeToClipboard: typeof import('../../src/utils/clipboard.js').writeToClipb
 
 describe('clipboard utility', () => {
   beforeAll(async () => {
-    // Mock the modules before importing clipboard
+    // Ensure node:child_process and node:os modules are mocked
     mock.module('node:child_process', () => ({
       spawn: mockSpawn,
     }));
@@ -96,7 +96,7 @@ describe('clipboard utility', () => {
       platform: () => mockPlatform,
     }));
 
-    // Import after mocking
+    // Import clipboard module after mocks are registered
     const module = await import('../../src/utils/clipboard.js');
     writeToClipboard = module.writeToClipboard;
   });

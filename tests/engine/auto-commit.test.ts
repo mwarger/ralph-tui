@@ -6,10 +6,10 @@
  * from other test files. Bun's mock.restore() does not reliably restore builtin modules.
  * See: https://github.com/oven-sh/bun/issues/7823
  *
- * TODO: The functions hasUncommittedChanges and performAutoCommit are re-implemented
- * locally using Bun.spawn. Once Bun fixes module mock restoration, these should be
- * replaced with imports from src/engine/auto-commit.ts to ensure tests stay in sync
- * with the production implementation.
+ * NOTE: The functions hasUncommittedChanges and performAutoCommit are re-implemented
+ * locally using Bun.spawn because of the mock restoration issue above. Replace these
+ * with imports from src/engine/auto-commit.ts when Bun's module mock restoration is
+ * fixed, to keep tests in sync with production.
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
