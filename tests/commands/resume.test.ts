@@ -11,10 +11,104 @@ import {
   listSessions,
   cleanupRegistry,
   resolveSession,
+  shouldWarnAboutTrackerMismatch,
   type ResumeArgs,
 } from '../../src/commands/resume.js';
 import type { SessionRegistryEntry } from '../../src/session/registry.js';
 import * as sessionModule from '../../src/session/index.js';
+
+/**
+ * Tests for tracker validation logic (shouldWarnAboutTrackerMismatch).
+ * See: https://github.com/subsy/ralph-tui/issues/247
+ *
+ * When resuming a session, if the tracker returns no tasks but the session
+ * has task history, we warn the user about the mismatch. This indicates
+ * the tracker cannot find the expected tasks (wrong epicId, missing prdPath, etc.).
+ */
+describe('shouldWarnAboutTrackerMismatch (issue #247)', () => {
+  describe('mismatch detection (should warn)', () => {
+    test('returns true when engine has 0 tasks but session has 130', () => {
+      // Scenario: session reports 108/130 complete but tracker finds 0 tasks
+      expect(shouldWarnAboutTrackerMismatch(0, 130)).toBe(true);
+    });
+
+    test('returns true when engine has 0 tasks but session has 1', () => {
+      expect(shouldWarnAboutTrackerMismatch(0, 1)).toBe(true);
+    });
+
+    test('returns true when engine has 0 tasks but session has large count', () => {
+      expect(shouldWarnAboutTrackerMismatch(0, 1000)).toBe(true);
+    });
+
+    test('returns true for minimal mismatch (0 vs 1)', () => {
+      // Edge case: smallest possible mismatch
+      expect(shouldWarnAboutTrackerMismatch(0, 1)).toBe(true);
+    });
+  });
+
+  describe('no mismatch (should not warn)', () => {
+    test('returns false when both have 0 tasks (fresh session)', () => {
+      expect(shouldWarnAboutTrackerMismatch(0, 0)).toBe(false);
+    });
+
+    test('returns false when engine has tasks matching session', () => {
+      expect(shouldWarnAboutTrackerMismatch(130, 130)).toBe(false);
+    });
+
+    test('returns false when engine has more tasks than session (tasks added)', () => {
+      expect(shouldWarnAboutTrackerMismatch(150, 130)).toBe(false);
+    });
+
+    test('returns false when engine has fewer tasks than session (some completed)', () => {
+      // Normal scenario: some tasks completed so fewer remain in open/in_progress state
+      expect(shouldWarnAboutTrackerMismatch(22, 130)).toBe(false);
+    });
+
+    test('returns false when engine has 1 task and session has 1', () => {
+      expect(shouldWarnAboutTrackerMismatch(1, 1)).toBe(false);
+    });
+
+    test('returns false when engine has 1 task but session has 0', () => {
+      // Session has no history, so no mismatch warning needed
+      expect(shouldWarnAboutTrackerMismatch(1, 0)).toBe(false);
+    });
+
+    test('returns false when engine has many tasks but session has 0', () => {
+      // Session has no history, so no mismatch warning needed
+      expect(shouldWarnAboutTrackerMismatch(100, 0)).toBe(false);
+    });
+  });
+
+  describe('boundary conditions', () => {
+    test('handles equal counts correctly', () => {
+      expect(shouldWarnAboutTrackerMismatch(0, 0)).toBe(false);
+      expect(shouldWarnAboutTrackerMismatch(1, 1)).toBe(false);
+      expect(shouldWarnAboutTrackerMismatch(50, 50)).toBe(false);
+      expect(shouldWarnAboutTrackerMismatch(1000, 1000)).toBe(false);
+    });
+
+    test('handles engine > session correctly', () => {
+      expect(shouldWarnAboutTrackerMismatch(1, 0)).toBe(false);
+      expect(shouldWarnAboutTrackerMismatch(10, 5)).toBe(false);
+      expect(shouldWarnAboutTrackerMismatch(100, 50)).toBe(false);
+    });
+
+    test('handles engine < session correctly (normal case)', () => {
+      // Some tasks completed, fewer remain
+      expect(shouldWarnAboutTrackerMismatch(1, 10)).toBe(false);
+      expect(shouldWarnAboutTrackerMismatch(50, 100)).toBe(false);
+      expect(shouldWarnAboutTrackerMismatch(99, 100)).toBe(false);
+    });
+
+    test('only warns when engine is exactly 0 AND session > 0', () => {
+      // Key invariant: both conditions must be true
+      expect(shouldWarnAboutTrackerMismatch(0, 1)).toBe(true);
+      expect(shouldWarnAboutTrackerMismatch(0, 100)).toBe(true);
+      expect(shouldWarnAboutTrackerMismatch(1, 1)).toBe(false);  // engine not 0
+      expect(shouldWarnAboutTrackerMismatch(0, 0)).toBe(false);  // session not > 0
+    });
+  });
+});
 
 describe('resume command', () => {
   describe('parseResumeArgs', () => {

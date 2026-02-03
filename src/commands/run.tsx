@@ -83,6 +83,29 @@ import { basename } from 'node:path';
 import { getEnvExclusionReport, formatEnvExclusionReport } from '../plugins/agents/base.js';
 
 /**
+ * Determine if all tasks are complete based on parallel/sequential mode state.
+ *
+ * In parallel mode, `parallelAllComplete` is set by the parallel executor.
+ * In sequential mode (parallelAllComplete is null), we check task counts.
+ *
+ * Note: The engine status is always 'idle' after runLoop exits (set in finally block),
+ * so completion must be determined by task counts, not engine status.
+ * See: https://github.com/subsy/ralph-tui/issues/247
+ *
+ * @param parallelAllComplete - Completion flag from parallel mode, or null for sequential
+ * @param tasksCompleted - Number of tasks completed
+ * @param totalTasks - Total number of tasks
+ * @returns true if session should be considered complete
+ */
+export function isSessionComplete(
+  parallelAllComplete: boolean | null,
+  tasksCompleted: number,
+  totalTasks: number
+): boolean {
+  return parallelAllComplete ?? (tasksCompleted >= totalTasks);
+}
+
+/**
  * Get git repository information for the current working directory.
  * Returns undefined values if not a git repository or git command fails.
  */
@@ -2854,12 +2877,12 @@ export async function executeRunCommand(args: string[]): Promise<void> {
   }
 
   // Check if all tasks completed successfully
-  // For parallel mode, parallelAllComplete was set inside the useParallel block
-  // For sequential mode, check engine state
-  const allComplete = parallelAllComplete ?? (() => {
-    const finalState = engine.getState();
-    return finalState.tasksCompleted >= finalState.totalTasks || finalState.status === 'idle';
-  })();
+  const finalState = engine.getState();
+  const allComplete = isSessionComplete(
+    parallelAllComplete,
+    finalState.tasksCompleted,
+    finalState.totalTasks
+  );
 
   if (allComplete) {
     // Mark as completed and clean up session file

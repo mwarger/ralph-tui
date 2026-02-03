@@ -47,6 +47,26 @@ import type { TrackerTask } from '../plugins/trackers/types.js';
 import { RunApp } from '../tui/components/RunApp.js';
 
 /**
+ * Check if there's a mismatch between tracker state and session state.
+ *
+ * Returns true if the engine reports 0 tasks but the session has task history,
+ * indicating the tracker cannot find the expected tasks (e.g., wrong epicId,
+ * missing prdPath file, or database state mismatch).
+ *
+ * See: https://github.com/subsy/ralph-tui/issues/247
+ *
+ * @param engineTotalTasks - Number of tasks loaded by the tracker
+ * @param sessionTotalTasks - Number of tasks recorded in the session
+ * @returns true if a warning should be shown about tracker/session mismatch
+ */
+export function shouldWarnAboutTrackerMismatch(
+  engineTotalTasks: number,
+  sessionTotalTasks: number
+): boolean {
+  return engineTotalTasks === 0 && sessionTotalTasks > 0;
+}
+
+/**
  * Parsed resume command arguments
  */
 export interface ResumeArgs {
@@ -642,6 +662,24 @@ export async function executeResumeCommand(args: string[]): Promise<void> {
     );
     await releaseLock(cwd);
     process.exit(1);
+  }
+
+  // Validate tracker state matches session expectations
+  const engineState = engine.getState();
+  const sessionTotalTasks = resumedState.trackerState.totalTasks;
+  if (shouldWarnAboutTrackerMismatch(engineState.totalTasks, sessionTotalTasks)) {
+    console.warn('\nWarning: Session has task history but tracker returned no tasks.');
+    console.warn('This may happen if:');
+    if (resumedState.trackerState.epicId) {
+      console.warn(`  - The epic ID "${resumedState.trackerState.epicId}" no longer exists`);
+    }
+    if (resumedState.trackerState.prdPath) {
+      console.warn(`  - The PRD file "${resumedState.trackerState.prdPath}" is missing or empty`);
+    }
+    console.warn('\nTo fix, provide the tracker source explicitly:');
+    console.warn('  ralph-tui run --prd <path-to-prd.json>');
+    console.warn('  ralph-tui run --epic <epic-id>');
+    console.warn('');
   }
 
   // Restore engine state from persisted session
