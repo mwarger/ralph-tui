@@ -4,7 +4,7 @@
  */
 
 import { describe, test, expect } from 'bun:test';
-import { filterTasksByRange, type TaskRangeFilter } from './run.js';
+import { filterTasksByRange, parseRunArgs, type TaskRangeFilter } from './run.js';
 import type { TrackerTask } from '../plugins/trackers/types.js';
 
 /**
@@ -166,6 +166,155 @@ describe('filterTasksByRange', () => {
       const result = filterTasksByRange(tasks, range);
 
       expect(result.message).toBe('Task range all: 5 of 5 tasks selected');
+    });
+  });
+});
+
+describe('parseRunArgs', () => {
+  describe('--task-range parsing', () => {
+    test('parses full range "1-5"', () => {
+      const result = parseRunArgs(['--task-range', '1-5']);
+
+      expect(result.taskRange).toEqual({ start: 1, end: 5 });
+    });
+
+    test('parses start-only range "3-"', () => {
+      const result = parseRunArgs(['--task-range', '3-']);
+
+      expect(result.taskRange).toEqual({ start: 3, end: undefined });
+    });
+
+    test('parses end-only range "-10"', () => {
+      const result = parseRunArgs(['--task-range', '-10']);
+
+      expect(result.taskRange).toEqual({ start: undefined, end: 10 });
+    });
+
+    test('parses single task number "5"', () => {
+      const result = parseRunArgs(['--task-range', '5']);
+
+      expect(result.taskRange).toEqual({ start: 5, end: 5 });
+    });
+
+    test('parses range with same start and end "3-3"', () => {
+      const result = parseRunArgs(['--task-range', '3-3']);
+
+      expect(result.taskRange).toEqual({ start: 3, end: 3 });
+    });
+
+    test('handles missing value after --task-range', () => {
+      const result = parseRunArgs(['--task-range']);
+
+      expect(result.taskRange).toBeUndefined();
+    });
+
+    test('handles --task-range followed by another flag', () => {
+      const result = parseRunArgs(['--task-range', '--parallel']);
+
+      // --parallel should not be consumed as a range value
+      expect(result.taskRange).toBeUndefined();
+      expect(result.parallel).toBe(true);
+    });
+
+    test('handles invalid range format gracefully', () => {
+      const result = parseRunArgs(['--task-range', 'abc']);
+
+      // NaN parsing should not set taskRange
+      expect(result.taskRange).toBeUndefined();
+    });
+  });
+
+  describe('--parallel parsing', () => {
+    test('parses --parallel without value as true', () => {
+      const result = parseRunArgs(['--parallel']);
+
+      expect(result.parallel).toBe(true);
+    });
+
+    test('parses --parallel with numeric value', () => {
+      const result = parseRunArgs(['--parallel', '4']);
+
+      expect(result.parallel).toBe(4);
+    });
+
+    test('parses --parallel with invalid value as true', () => {
+      const result = parseRunArgs(['--parallel', 'abc']);
+
+      expect(result.parallel).toBe(true);
+    });
+
+    test('parses --parallel followed by another flag', () => {
+      const result = parseRunArgs(['--parallel', '--headless']);
+
+      expect(result.parallel).toBe(true);
+      expect(result.headless).toBe(true);
+    });
+  });
+
+  describe('--direct-merge parsing', () => {
+    test('parses --direct-merge flag', () => {
+      const result = parseRunArgs(['--direct-merge']);
+
+      expect(result.directMerge).toBe(true);
+    });
+  });
+
+  describe('--serial/--sequential parsing', () => {
+    test('parses --serial flag', () => {
+      const result = parseRunArgs(['--serial']);
+
+      expect(result.serial).toBe(true);
+    });
+
+    test('parses --sequential flag', () => {
+      const result = parseRunArgs(['--sequential']);
+
+      expect(result.serial).toBe(true);
+    });
+  });
+
+  describe('--listen parsing', () => {
+    test('parses --listen flag and sets headless', () => {
+      const result = parseRunArgs(['--listen']);
+
+      expect(result.listen).toBe(true);
+      expect(result.headless).toBe(true);
+    });
+
+    test('parses --listen-port with valid port', () => {
+      const result = parseRunArgs(['--listen-port', '8080']);
+
+      expect(result.listenPort).toBe(8080);
+    });
+
+    test('ignores --listen-port with invalid port', () => {
+      const result = parseRunArgs(['--listen-port', '0']);
+
+      expect(result.listenPort).toBeUndefined();
+    });
+
+    test('ignores --listen-port with port > 65535', () => {
+      const result = parseRunArgs(['--listen-port', '70000']);
+
+      expect(result.listenPort).toBeUndefined();
+    });
+  });
+
+  describe('combined options', () => {
+    test('parses multiple options together', () => {
+      const result = parseRunArgs([
+        '--parallel',
+        '3',
+        '--task-range',
+        '1-10',
+        '--direct-merge',
+        '--headless',
+      ]);
+
+      expect(result.parallel).toBe(3);
+      expect(result.taskRange).toEqual({ start: 1, end: 10 });
+      expect(result.directMerge).toBe(true);
+      expect(result.headless).toBe(true);
     });
   });
 });
