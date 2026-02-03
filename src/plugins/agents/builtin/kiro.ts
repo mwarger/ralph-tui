@@ -152,7 +152,7 @@ export class KiroAgentPlugin extends BaseAgentPlugin {
       setTimeout(() => {
         proc.kill();
         resolve({ success: false, error: 'Timeout waiting for version' });
-      }, 5000);
+      }, 15000);
     });
   }
 

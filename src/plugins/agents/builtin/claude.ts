@@ -219,11 +219,11 @@ export class ClaudeAgentPlugin extends BaseAgentPlugin {
         }
       });
 
-      // Timeout after 5 seconds
+      // Timeout after 15 seconds
       setTimeout(() => {
         proc.kill();
         resolve({ success: false, error: 'Timeout waiting for --version' });
-      }, 5000);
+      }, 15000);
     });
   }
 

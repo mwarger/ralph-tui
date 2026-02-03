@@ -237,7 +237,7 @@ export class GeminiAgentPlugin extends BaseAgentPlugin {
       const timer = setTimeout(() => {
         proc.kill();
         safeResolve({ success: false, error: 'Timeout waiting for --version' });
-      }, 5000);
+      }, 15000);
     });
   }
 

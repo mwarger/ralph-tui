@@ -60,11 +60,11 @@ export function findCommandPath(
       }
     });
 
-    // Timeout after 5 seconds
+    // Timeout after 15 seconds
     setTimeout(() => {
       proc.kill();
       resolve({ found: false, path: '' });
-    }, 5000);
+    }, 15000);
   });
 }
 
@@ -385,14 +385,14 @@ export abstract class BaseAgentPlugin implements AgentPlugin {
         }
       });
 
-      // Timeout after 5 seconds for version check
+      // Timeout after 15 seconds for version check
       setTimeout(() => {
         proc.kill();
         resolve({
           available: false,
           error: `Timeout waiting for ${command} --version`,
         });
-      }, 5000);
+      }, 15000);
     });
   }
 
