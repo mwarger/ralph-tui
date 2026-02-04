@@ -103,6 +103,20 @@ export interface ParallelConfig {
 }
 
 /**
+ * Configuration for AI-powered conflict resolution during parallel execution.
+ */
+export interface ConflictResolutionConfig {
+  /** Whether to attempt AI resolution for merge conflicts (default: true) */
+  enabled?: boolean;
+
+  /** Timeout in milliseconds for AI resolution per file (default: 120000) */
+  timeoutMs?: number;
+
+  /** Maximum files to attempt AI resolution on per conflict (default: 10) */
+  maxFiles?: number;
+}
+
+/**
  * Runtime options that can be passed via CLI flags
  */
 export interface RuntimeOptions {
@@ -278,6 +292,9 @@ export interface StoredConfig {
 
   /** Parallel execution configuration */
   parallel?: ParallelConfig;
+
+  /** Conflict resolution configuration for parallel execution */
+  conflictResolution?: ConflictResolutionConfig;
 }
 
 /**
@@ -337,6 +354,9 @@ export interface RalphConfig {
    * Used for --task-range filtering.
    */
   filteredTaskIds?: string[];
+
+  /** Conflict resolution configuration for parallel execution */
+  conflictResolution?: ConflictResolutionConfig;
 }
 
 /**

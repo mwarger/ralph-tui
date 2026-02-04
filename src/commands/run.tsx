@@ -43,6 +43,7 @@ import {
 } from '../session/index.js';
 import { ExecutionEngine } from '../engine/index.js';
 import { ParallelExecutor, analyzeTaskGraph, shouldRunParallel, recommendParallelism } from '../parallel/index.js';
+import { createAiResolver } from '../parallel/ai-resolver.js';
 import type {
   WorkerDisplayState,
   MergeOperation,
@@ -2816,6 +2817,17 @@ export async function executeRunCommand(args: string[]): Promise<void> {
         directMerge,
         filteredTaskIds,
       });
+
+      // Wire up AI conflict resolution if enabled (default: true)
+      const conflictResolutionEnabled = storedConfig?.conflictResolution?.enabled !== false;
+      if (conflictResolutionEnabled) {
+        // Pass conflict resolution config to RalphConfig for the resolver
+        const configWithConflictRes = {
+          ...config,
+          conflictResolution: storedConfig?.conflictResolution,
+        };
+        parallelExecutor.setAiResolver(createAiResolver(configWithConflictRes));
+      }
 
       // Track session branch info for completion guidance
       let sessionBranchForGuidance: string | null = null;

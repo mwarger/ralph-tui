@@ -85,6 +85,18 @@ export const ParallelConfigSchema = z.object({
 });
 
 /**
+ * Conflict resolution configuration schema for parallel execution
+ */
+export const ConflictResolutionConfigSchema = z.object({
+  /** Whether to attempt AI resolution for merge conflicts (default: true) */
+  enabled: z.boolean().optional(),
+  /** Timeout in milliseconds for AI resolution per file (default: 120000) */
+  timeoutMs: z.number().int().min(1000).max(600000).optional(),
+  /** Maximum files to attempt AI resolution on per conflict (default: 10) */
+  maxFiles: z.number().int().min(1).max(100).optional(),
+});
+
+/**
  * Agent plugin configuration schema
  */
 export const AgentPluginConfigSchema = z.object({
@@ -203,6 +215,9 @@ export const StoredConfigSchema = z
 
     // Parallel execution configuration
     parallel: ParallelConfigSchema.optional(),
+
+    // Conflict resolution configuration for parallel execution
+    conflictResolution: ConflictResolutionConfigSchema.optional(),
   })
   .strict();
 
