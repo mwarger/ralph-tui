@@ -66,6 +66,25 @@ export const NotificationsConfigSchema = z.object({
 });
 
 /**
+ * Parallel execution mode schema
+ */
+export const ParallelModeSchema = z.enum(['auto', 'always', 'never']);
+
+/**
+ * Parallel execution configuration schema
+ */
+export const ParallelConfigSchema = z.object({
+  /** Execution mode: 'auto' analyzes dependencies, 'always' forces parallel, 'never' disables */
+  mode: ParallelModeSchema.optional(),
+  /** Maximum concurrent workers (default: 3) */
+  maxWorkers: z.number().int().min(1).max(32).optional(),
+  /** Directory for git worktrees relative to project root */
+  worktreeDir: z.string().optional(),
+  /** Merge directly to the current branch instead of creating a session branch */
+  directMerge: z.boolean().optional(),
+});
+
+/**
  * Agent plugin configuration schema
  */
 export const AgentPluginConfigSchema = z.object({
@@ -178,6 +197,12 @@ export const StoredConfigSchema = z
 
     // Notifications configuration
     notifications: NotificationsConfigSchema.optional(),
+
+    // Progress file path for cross-iteration context
+    progressFile: z.string().optional(),
+
+    // Parallel execution configuration
+    parallel: ParallelConfigSchema.optional(),
   })
   .strict();
 

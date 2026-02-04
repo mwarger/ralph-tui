@@ -12,6 +12,8 @@ import {
   RateLimitHandlingConfigSchema,
   NotificationSoundModeSchema,
   NotificationsConfigSchema,
+  ParallelModeSchema,
+  ParallelConfigSchema,
   AgentPluginConfigSchema,
   TrackerOptionsSchema,
   TrackerPluginConfigSchema,
@@ -164,6 +166,57 @@ describe('NotificationsConfigSchema', () => {
 
   test('accepts empty object', () => {
     expect(NotificationsConfigSchema.parse({})).toEqual({});
+  });
+});
+
+describe('ParallelModeSchema', () => {
+  test('accepts valid modes', () => {
+    expect(ParallelModeSchema.parse('auto')).toBe('auto');
+    expect(ParallelModeSchema.parse('always')).toBe('always');
+    expect(ParallelModeSchema.parse('never')).toBe('never');
+  });
+
+  test('rejects invalid modes', () => {
+    expect(() => ParallelModeSchema.parse('invalid')).toThrow();
+    expect(() => ParallelModeSchema.parse('')).toThrow();
+    expect(() => ParallelModeSchema.parse(123)).toThrow();
+  });
+});
+
+describe('ParallelConfigSchema', () => {
+  test('accepts valid full configuration', () => {
+    const result = ParallelConfigSchema.parse({
+      mode: 'auto',
+      maxWorkers: 4,
+      worktreeDir: '.ralph-tui/worktrees',
+      directMerge: true,
+    });
+    expect(result.mode).toBe('auto');
+    expect(result.maxWorkers).toBe(4);
+    expect(result.worktreeDir).toBe('.ralph-tui/worktrees');
+    expect(result.directMerge).toBe(true);
+  });
+
+  test('accepts empty object (all fields optional)', () => {
+    const result = ParallelConfigSchema.parse({});
+    expect(result).toEqual({});
+  });
+
+  test('accepts partial configuration', () => {
+    const result = ParallelConfigSchema.parse({ mode: 'always' });
+    expect(result.mode).toBe('always');
+    expect(result.maxWorkers).toBeUndefined();
+  });
+
+  test('validates maxWorkers bounds', () => {
+    expect(() => ParallelConfigSchema.parse({ maxWorkers: 0 })).toThrow();
+    expect(() => ParallelConfigSchema.parse({ maxWorkers: 33 })).toThrow();
+    expect(ParallelConfigSchema.parse({ maxWorkers: 1 }).maxWorkers).toBe(1);
+    expect(ParallelConfigSchema.parse({ maxWorkers: 32 }).maxWorkers).toBe(32);
+  });
+
+  test('validates maxWorkers is integer', () => {
+    expect(() => ParallelConfigSchema.parse({ maxWorkers: 2.5 })).toThrow();
   });
 });
 
@@ -429,6 +482,60 @@ describe('StoredConfigSchema', () => {
     });
     expect(result.envExclude).toEqual(['*_TOKEN']);
     expect(result.envPassthrough).toEqual(['MY_API_KEY']);
+  });
+
+  test('accepts progressFile field', () => {
+    const result = StoredConfigSchema.parse({
+      progressFile: '.ralph-tui/progress.md',
+    });
+    expect(result.progressFile).toBe('.ralph-tui/progress.md');
+  });
+
+  test('accepts parallel configuration', () => {
+    const result = StoredConfigSchema.parse({
+      parallel: {
+        mode: 'auto',
+        maxWorkers: 4,
+        worktreeDir: '.ralph-tui/worktrees',
+        directMerge: false,
+      },
+    });
+    expect(result.parallel?.mode).toBe('auto');
+    expect(result.parallel?.maxWorkers).toBe(4);
+    expect(result.parallel?.worktreeDir).toBe('.ralph-tui/worktrees');
+    expect(result.parallel?.directMerge).toBe(false);
+  });
+
+  test('accepts partial parallel configuration', () => {
+    const result = StoredConfigSchema.parse({
+      parallel: {
+        mode: 'never',
+      },
+    });
+    expect(result.parallel?.mode).toBe('never');
+    expect(result.parallel?.maxWorkers).toBeUndefined();
+  });
+
+  test('accepts progressFile and parallel together', () => {
+    const result = StoredConfigSchema.parse({
+      progressFile: 'custom-progress.md',
+      parallel: {
+        mode: 'always',
+        maxWorkers: 8,
+      },
+    });
+    expect(result.progressFile).toBe('custom-progress.md');
+    expect(result.parallel?.mode).toBe('always');
+    expect(result.parallel?.maxWorkers).toBe(8);
+  });
+
+  test('validates parallel.maxWorkers bounds', () => {
+    expect(() => StoredConfigSchema.parse({ parallel: { maxWorkers: 0 } })).toThrow();
+    expect(() => StoredConfigSchema.parse({ parallel: { maxWorkers: 33 } })).toThrow();
+  });
+
+  test('validates parallel.mode values', () => {
+    expect(() => StoredConfigSchema.parse({ parallel: { mode: 'invalid' } })).toThrow();
   });
 });
 
