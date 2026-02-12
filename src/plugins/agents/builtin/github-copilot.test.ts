@@ -3,7 +3,27 @@
  * Tests configuration, argument building, and setup for GitHub Copilot agent.
  */
 
-import { describe, expect, test, beforeEach, afterEach } from 'bun:test';
+import { describe, expect, test, beforeEach, afterEach, mock } from 'bun:test';
+import { EventEmitter } from 'node:events';
+
+// Mock child_process
+class MockChildProcess extends EventEmitter {
+    stdout = new EventEmitter();
+    stderr = new EventEmitter();
+    stdin = { write: () => { }, end: () => { } };
+    kill = () => { };
+    unref = () => { };
+}
+
+let currentMockProcess: MockChildProcess;
+
+mock.module('node:child_process', () => ({
+    spawn: () => {
+        currentMockProcess = new MockChildProcess();
+        return currentMockProcess;
+    }
+}));
+
 import { GithubCopilotAgentPlugin } from './github-copilot.js';
 
 describe('GithubCopilotAgentPlugin', () => {
@@ -186,5 +206,75 @@ describe('GithubCopilotAgentPlugin buildArgs', () => {
         await plugin.initialize({});
         const stdinInput = (plugin as TestableGithubCopilotPlugin).testGetStdinInput('my test prompt');
         expect(stdinInput).toBe('my test prompt');
+    });
+});
+
+describe('GithubCopilotAgentPlugin runVersion', () => {
+    let plugin: GithubCopilotAgentPlugin;
+
+    beforeEach(() => {
+        plugin = new GithubCopilotAgentPlugin();
+    });
+
+    afterEach(async () => {
+        await plugin.dispose();
+    });
+
+    test('extracts version from successful output', async () => {
+        const promise = (plugin as any).runVersion('copilot');
+
+        // Wait for process to be created
+        // We need next tick or similar because runVersion calls spawn immediately
+        // but we need to reference currentMockProcess which is set by side-effect
+        await new Promise(resolve => setTimeout(resolve, 0));
+
+        expect(currentMockProcess).toBeDefined();
+
+        // Emit output and close behavior
+        // The implementation accumulates stdout
+        currentMockProcess.stdout.emit('data', Buffer.from('copilot version 1.0.0\n'));
+        currentMockProcess.emit('close', 0);
+
+        const result = await promise;
+        expect(result.success).toBe(true);
+        expect(result.version).toBe('1.0.0');
+    });
+
+    test('handles parse failure', async () => {
+        const promise = (plugin as any).runVersion('copilot');
+
+        await new Promise(resolve => setTimeout(resolve, 0));
+
+        currentMockProcess.stdout.emit('data', Buffer.from('unexpected output\n'));
+        currentMockProcess.emit('close', 0);
+
+        const result = await promise;
+        expect(result.success).toBe(false);
+        expect(result.error).toContain('Unable to parse');
+    });
+
+    test('handles non-zero exit code', async () => {
+        const promise = (plugin as any).runVersion('copilot');
+
+        await new Promise(resolve => setTimeout(resolve, 0));
+
+        currentMockProcess.stderr.emit('data', Buffer.from('command failed\n'));
+        currentMockProcess.emit('close', 1);
+
+        const result = await promise;
+        expect(result.success).toBe(false);
+        expect(result.error).toContain('command failed');
+    });
+
+    test('handles spawn error', async () => {
+        const promise = (plugin as any).runVersion('copilot');
+
+        await new Promise(resolve => setTimeout(resolve, 0));
+
+        currentMockProcess.emit('error', new Error('spawn failed'));
+
+        const result = await promise;
+        expect(result.success).toBe(false);
+        expect(result.error).toContain('spawn failed');
     });
 });
