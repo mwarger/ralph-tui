@@ -602,6 +602,24 @@ describe('BeadsRustTrackerPlugin', () => {
       const task = await plugin.getTask('t1');
       expect(task).toBeUndefined();
     });
+
+    test('returns undefined when br show returns a tombstoned task', async () => {
+      mockSpawnResponses = [
+        { exitCode: 0, stdout: 'br version 0.4.1\n' },
+        {
+          exitCode: 0,
+          stdout: JSON.stringify([
+            { id: 't1', title: 'Deleted task', status: 'tombstone', priority: 2 },
+          ]),
+        },
+      ];
+
+      const plugin = new BeadsRustTrackerPlugin();
+      await plugin.initialize({ workingDir: '/test' });
+
+      const task = await plugin.getTask('t1');
+      expect(task).toBeUndefined();
+    });
   });
 
   describe('getNextTask', () => {

@@ -447,6 +447,10 @@ export class BeadsRustTrackerPlugin extends BaseTrackerPlugin {
       return undefined;
     }
 
+    if (isTombstone(tasksJson[0]!.status)) {
+      return undefined;
+    }
+
     return brTaskToTask(tasksJson[0]!);
   }
 
