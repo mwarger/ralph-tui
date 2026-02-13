@@ -10,7 +10,7 @@ import { useState, useCallback, useEffect, useRef } from 'react';
 import { useKeyboard, useRenderer } from '@opentui/react';
 import type { KeyEvent, PasteEvent } from '@opentui/core';
 import { platform } from 'node:os';
-import { writeToClipboard } from '../../utils/index.js';
+import { readFromClipboard, writeToClipboard } from '../../utils/index.js';
 import { writeFile, mkdir, access } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
@@ -377,6 +377,8 @@ export function PrdChatApp({
   const isMountedRef = useRef(true);
   // Ref for inserting text into the chat input (used for image markers)
   const insertTextRef = useRef<((text: string) => void) | null>(null);
+  // Tracks last native paste event timestamp for keyboard-shortcut fallback detection.
+  const lastPasteEventAtRef = useRef(0);
 
   // Get tracker options
   const trackerOptions = getTrackerOptions(cwd);
@@ -717,11 +719,41 @@ Read the PRD and create the appropriate tasks.${labelsInstruction}`;
   );
 
   /**
+   * Clipboard fallback for terminals that don't emit OpenTUI paste events.
+   * Triggered by paste keyboard shortcuts when no paste event follows shortly after.
+   */
+  const performClipboardPasteFallback = useCallback(async () => {
+    if (isLoading) {
+      return;
+    }
+
+    if (imagesEnabled) {
+      const imageResult = await attachFromClipboard();
+      if (imageResult.success && imageResult.inlineMarker) {
+        if (insertTextRef.current) {
+          insertTextRef.current(imageResult.inlineMarker + ' ');
+        }
+        return;
+      }
+    }
+
+    const textResult = await readFromClipboard();
+    if (!textResult.success || !textResult.text || !insertTextRef.current) {
+      return;
+    }
+
+    insertTextRef.current(textResult.text);
+    onTextPaste();
+  }, [isLoading, imagesEnabled, attachFromClipboard, onTextPaste]);
+
+  /**
    * Handle keyboard input (only for non-input keys like Escape and review phase shortcuts)
    * Text editing is handled by the native OpenTUI input component
    */
   const handleKeyboard = useCallback(
     (key: KeyEvent) => {
+      const keyName = key.name.toLowerCase();
+
       // Handle clipboard copy:
       // - macOS: Cmd+C (meta key)
       // - Linux: Ctrl+Shift+C or Alt+C
@@ -731,11 +763,11 @@ Read the PRD and create the appropriate tasks.${labelsInstruction}`;
       const isWindows = platform() === 'win32';
       const selection = renderer.getSelection();
       const isCopyShortcut = isMac
-        ? key.meta && key.name === 'c'
+        ? key.meta && keyName === 'c'
         : isWindows
-          ? key.ctrl && key.name === 'c'
-          : (key.ctrl && key.shift && key.name === 'c') ||
-            (key.option && key.name === 'c');
+          ? key.ctrl && keyName === 'c'
+          : (key.ctrl && key.shift && keyName === 'c') ||
+            (key.option && keyName === 'c');
 
       if (isCopyShortcut && selection) {
         const selectedText = selection.getSelectedText();
@@ -767,6 +799,28 @@ Read the PRD and create the appropriate tasks.${labelsInstruction}`;
 
       // Don't process keys while loading
       if (isLoading) {
+        return;
+      }
+
+      // Handle paste fallback shortcuts for terminals that do not emit paste events.
+      // If a native paste event arrives right after this shortcut, fallback is skipped.
+      const isPasteShortcut = isMac
+        ? key.meta && keyName === 'v'
+        : isWindows
+          ? (key.ctrl && keyName === 'v') ||
+            (key.shift && keyName === 'insert')
+          : (key.ctrl && keyName === 'v') ||
+            (key.ctrl && key.shift && keyName === 'v') ||
+            (key.shift && keyName === 'insert');
+      if (isPasteShortcut) {
+        key.preventDefault?.();
+        const requestTime = Date.now();
+        setTimeout(() => {
+          if (lastPasteEventAtRef.current >= requestTime) {
+            return;
+          }
+          void performClipboardPasteFallback();
+        }, 80);
         return;
       }
 
@@ -815,6 +869,7 @@ Read the PRD and create the appropriate tasks.${labelsInstruction}`;
       isLoading,
       phase,
       trackerOptions,
+      performClipboardPasteFallback,
       handleTrackerSelect,
       prdPath,
       featureName,
@@ -846,6 +901,8 @@ Read the PRD and create the appropriate tasks.${labelsInstruction}`;
       if (!imagesEnabled) {
         return;
       }
+
+      lastPasteEventAtRef.current = Date.now();
 
       const pasteType = classifyPastePayload(text);
       const hasText = text.trim().length > 0;

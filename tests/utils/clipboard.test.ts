@@ -16,6 +16,7 @@ let mockPlatform = 'darwin';
 let mockSpawnBehavior: 'success' | 'enoent' | 'error' | 'stderr' | 'other-error' = 'success';
 let mockSpawnSequence: Array<'success' | 'enoent' | 'error' | 'stderr' | 'other-error'> = [];
 let spawnCallIndex = 0;
+let mockStdoutData = '';
 
 // Create mock stdin
 function createMockStdin() {
@@ -40,6 +41,9 @@ function createMockProcess(behavior: 'success' | 'enoent' | 'error' | 'stderr' |
   setImmediate(() => {
     switch (behavior) {
       case 'success':
+        if (mockStdoutData) {
+          proc.stdout.emit('data', Buffer.from(mockStdoutData));
+        }
         proc.emit('close', 0);
         break;
       case 'enoent': {
@@ -84,6 +88,7 @@ function mockSpawn(command: string, args: string[]) {
 
 // Declare the function type for the import
 let writeToClipboard: typeof import('../../src/utils/clipboard.js').writeToClipboard;
+let readFromClipboard: typeof import('../../src/utils/clipboard.js').readFromClipboard;
 
 describe('clipboard utility', () => {
   beforeAll(async () => {
@@ -99,6 +104,7 @@ describe('clipboard utility', () => {
     // Import clipboard module after mocks are registered
     const module = await import('../../src/utils/clipboard.js');
     writeToClipboard = module.writeToClipboard;
+    readFromClipboard = module.readFromClipboard;
   });
 
   afterAll(() => {
@@ -111,12 +117,14 @@ describe('clipboard utility', () => {
     mockSpawnBehavior = 'success';
     mockSpawnSequence = [];
     spawnCallIndex = 0;
+    mockStdoutData = '';
   });
 
   afterEach(() => {
     spawnCalls = [];
     mockSpawnSequence = [];
     spawnCallIndex = 0;
+    mockStdoutData = '';
   });
 
   describe('writeToClipboard', () => {
@@ -268,6 +276,69 @@ describe('clipboard utility', () => {
 
       expect(result.success).toBe(true);
       expect(spawnCalls[0]!.command).toBe('wl-copy');
+    });
+  });
+
+  describe('readFromClipboard', () => {
+    test('uses pbpaste on macOS', async () => {
+      mockPlatform = 'darwin';
+      mockSpawnBehavior = 'success';
+      mockStdoutData = 'hello from clipboard';
+
+      const result = await readFromClipboard();
+
+      expect(result.success).toBe(true);
+      expect(result.text).toBe('hello from clipboard');
+      expect(spawnCalls.length).toBe(1);
+      expect(spawnCalls[0]!.command).toBe('pbpaste');
+    });
+
+    test('tries wl-paste first on Linux', async () => {
+      mockPlatform = 'linux';
+      mockSpawnBehavior = 'success';
+      mockStdoutData = 'linux text';
+
+      const result = await readFromClipboard();
+
+      expect(result.success).toBe(true);
+      expect(result.text).toBe('linux text');
+      expect(spawnCalls.length).toBe(1);
+      expect(spawnCalls[0]!.command).toBe('wl-paste');
+      expect(spawnCalls[0]!.args).toEqual(['--no-newline', '--type', 'text']);
+    });
+
+    test('falls back to xclip if wl-paste fails on Linux', async () => {
+      mockPlatform = 'linux';
+      mockSpawnSequence = ['enoent', 'success'];
+      mockStdoutData = 'xclip text';
+
+      const result = await readFromClipboard();
+
+      expect(result.success).toBe(true);
+      expect(result.text).toBe('xclip text');
+      expect(spawnCalls.length).toBe(2);
+      expect(spawnCalls[0]!.command).toBe('wl-paste');
+      expect(spawnCalls[1]!.command).toBe('xclip');
+      expect(spawnCalls[1]!.args).toEqual([
+        '-selection',
+        'clipboard',
+        '-t',
+        'text/plain',
+        '-o',
+      ]);
+    });
+
+    test('uses PowerShell on Windows', async () => {
+      mockPlatform = 'win32';
+      mockSpawnBehavior = 'success';
+      mockStdoutData = 'windows text';
+
+      const result = await readFromClipboard();
+
+      expect(result.success).toBe(true);
+      expect(result.text).toBe('windows text');
+      expect(spawnCalls.length).toBe(1);
+      expect(spawnCalls[0]!.command).toBe('powershell');
     });
   });
 });

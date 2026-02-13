@@ -1,7 +1,7 @@
 /**
- * ABOUTME: Cross-platform clipboard write utility for terminal applications.
- * Uses OS-specific commands (pbcopy, wl-copy, xclip, clip.exe) for reliable
- * clipboard access across different terminal and display server configurations.
+ * ABOUTME: Cross-platform clipboard read/write utility for terminal applications.
+ * Uses OS-specific commands (pbcopy/pbpaste, wl-copy/wl-paste, xclip/xsel, clip/PowerShell)
+ * for reliable clipboard access across different terminal and display server configurations.
  */
 
 import { spawn } from 'node:child_process';
@@ -17,6 +17,18 @@ export interface ClipboardResult {
   error?: string;
   /** Number of characters written */
   charCount?: number;
+}
+
+/**
+ * Result of a clipboard read operation.
+ */
+export interface ClipboardReadResult {
+  /** Whether the clipboard read succeeded */
+  success: boolean;
+  /** Clipboard text content (if successful) */
+  text?: string;
+  /** Error message if the operation failed */
+  error?: string;
 }
 
 /**
@@ -60,6 +72,40 @@ export async function writeToClipboard(text: string): Promise<ClipboardResult> {
   }
 
   return runClipboardCommand(command, args, text);
+}
+
+/**
+ * Read text from the system clipboard.
+ *
+ * Platform support:
+ * - macOS: Uses `pbpaste` (built-in)
+ * - Linux: Uses `wl-paste`, `xclip`, or `xsel`
+ * - Windows: Uses PowerShell `Get-Clipboard -Raw`
+ *
+ * @returns Promise resolving to clipboard read result
+ */
+export async function readFromClipboard(): Promise<ClipboardReadResult> {
+  const os = platform();
+
+  switch (os) {
+    case 'darwin':
+      return runClipboardReadCommand('pbpaste', []);
+
+    case 'linux':
+    case 'freebsd':
+    case 'openbsd':
+      return tryLinuxClipboardRead();
+
+    case 'win32':
+      return runClipboardReadCommand('powershell', [
+        '-NoProfile',
+        '-Command',
+        'Get-Clipboard -Raw',
+      ]);
+
+    default:
+      return { success: false, error: `Unsupported platform: ${os}` };
+  }
 }
 
 /**
@@ -136,6 +182,95 @@ function runClipboardCommand(
       // Write text to stdin and close
       proc.stdin?.write(text);
       proc.stdin?.end();
+    } catch (err) {
+      resolve({
+        success: false,
+        error: err instanceof Error ? err.message : 'Unknown error',
+      });
+    }
+  });
+}
+
+/**
+ * Try Linux clipboard read commands in order of preference.
+ */
+async function tryLinuxClipboardRead(): Promise<ClipboardReadResult> {
+  const wlResult = await runClipboardReadCommand('wl-paste', [
+    '--no-newline',
+    '--type',
+    'text',
+  ]);
+  if (wlResult.success) {
+    return wlResult;
+  }
+
+  const xclipResult = await runClipboardReadCommand('xclip', [
+    '-selection',
+    'clipboard',
+    '-t',
+    'text/plain',
+    '-o',
+  ]);
+  if (xclipResult.success) {
+    return xclipResult;
+  }
+
+  const xselResult = await runClipboardReadCommand('xsel', [
+    '--clipboard',
+    '--output',
+  ]);
+  if (xselResult.success) {
+    return xselResult;
+  }
+
+  return {
+    success: false,
+    error: 'No clipboard tool available. Install: wl-clipboard (Wayland) or xclip (X11)',
+  };
+}
+
+/**
+ * Run a clipboard read command and capture stdout as text.
+ */
+function runClipboardReadCommand(
+  command: string,
+  args: string[],
+): Promise<ClipboardReadResult> {
+  return new Promise((resolve) => {
+    try {
+      const proc = spawn(command, args, {
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+
+      let stdout = '';
+      let stderr = '';
+
+      proc.stdout?.on('data', (data: Buffer) => {
+        stdout += data.toString();
+      });
+
+      proc.stderr?.on('data', (data: Buffer) => {
+        stderr += data.toString();
+      });
+
+      proc.on('error', (err: NodeJS.ErrnoException) => {
+        if (err.code === 'ENOENT') {
+          resolve({ success: false, error: `Command not found: ${command}` });
+        } else {
+          resolve({ success: false, error: err.message });
+        }
+      });
+
+      proc.on('close', (code) => {
+        if (code === 0) {
+          resolve({ success: true, text: stdout });
+        } else {
+          resolve({
+            success: false,
+            error: stderr.trim() || `Command exited with code ${code}`,
+          });
+        }
+      });
     } catch (err) {
       resolve({
         success: false,
