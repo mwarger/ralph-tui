@@ -1057,7 +1057,7 @@ export class StreamingOutputParser {
           // Color based on event structure, not display string prefixes
           const event = kimiResult.event;
           const isToolCall = event.role === 'tool' && event.content?.some(item => item.type === 'function');
-          const isError = event.type === 'error' || event.error !== undefined ||
+          const isError = event.type === 'error' || !!event.error ||
             event.content?.some(item => (item.type === 'tool_result' || item.type === 'function_result') && item.is_error === true);
           if (isToolCall) {
             return [{ text: displayText, color: 'cyan' }];
