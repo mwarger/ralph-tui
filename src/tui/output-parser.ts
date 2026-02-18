@@ -99,6 +99,7 @@ interface KimiEvent {
     };
   }>;
   type?: string;
+  text?: string;
   error?: unknown;
   message?: string;
 }
@@ -117,6 +118,10 @@ function parseKimiJsonlLine(line: string): { success: boolean; event?: KimiEvent
     if (parsed.role && Array.isArray(parsed.content)) {
       return { success: true, event: parsed };
     }
+    // Handle top-level text events
+    if (parsed.type === 'text') {
+      return { success: true, event: parsed };
+    }
     // Also handle error events
     if (parsed.type === 'error' || parsed.error) {
       return { success: true, event: parsed };
@@ -133,6 +138,10 @@ function parseKimiJsonlLine(line: string): { success: boolean; event?: KimiEvent
  */
 function formatKimiEventForDisplay(event: KimiEvent): string | undefined {
   if (!event.content || !Array.isArray(event.content)) {
+    // Handle top-level text events
+    if (event.type === 'text' && event.text) {
+      return event.text;
+    }
     // Handle error events
     if (event.type === 'error' || event.error) {
       const msg = typeof event.error === 'string' ? event.error :
@@ -1045,11 +1054,15 @@ export class StreamingOutputParser {
       if (kimiResult.success && kimiResult.event) {
         const displayText = formatKimiEventForDisplay(kimiResult.event);
         if (displayText) {
-          // Color tool calls and errors
-          if (displayText.startsWith('[Tool:')) {
+          // Color based on event structure, not display string prefixes
+          const event = kimiResult.event;
+          const isToolCall = event.role === 'tool' && event.content?.some(item => item.type === 'function');
+          const isError = event.type === 'error' || event.error !== undefined ||
+            event.content?.some(item => (item.type === 'tool_result' || item.type === 'function_result') && item.is_error === true);
+          if (isToolCall) {
             return [{ text: displayText, color: 'cyan' }];
           }
-          if (displayText.startsWith('[Tool Error]') || displayText.startsWith('Error:')) {
+          if (isError) {
             return [{ text: displayText, color: 'yellow' }];
           }
           return [{ text: displayText }];

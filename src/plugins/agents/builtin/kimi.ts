@@ -7,6 +7,7 @@
 import { spawn } from 'node:child_process';
 import { BaseAgentPlugin, findCommandPath, quoteForWindowsShell } from '../base.js';
 import { processAgentEvents, processAgentEventsToSegments, type AgentDisplayEvent } from '../output-formatting.js';
+import { extractErrorMessage } from '../utils.js';
 import type {
   AgentPluginMeta,
   AgentPluginFactory,
@@ -28,7 +29,7 @@ import type {
  * @internal Exported for testing only.
  */
 export function parseKimiJsonLine(jsonLine: string): AgentDisplayEvent[] {
-  if (!jsonLine || jsonLine.length === 0) return [];
+  if (!jsonLine) return [];
 
   try {
     const event = JSON.parse(jsonLine);
@@ -60,17 +61,13 @@ export function parseKimiJsonLine(jsonLine: string): AgentDisplayEvent[] {
         }
         // Skip: think (internal reasoning), status updates, etc.
       }
-    }
-
-    // Handle top-level text content
-    if (event.type === 'text' && event.text) {
+    } else if (event.type === 'text' && event.text) {
+      // Handle top-level text content (only when no content array)
       events.push({ type: 'text', content: event.text });
-    }
-
-    // Handle error events
-    if (event.type === 'error' || event.error) {
-      const msg = event.error?.message || event.message || event.error || 'Unknown error';
-      events.push({ type: 'error', message: String(msg) });
+    } else if (event.type === 'error' || event.error) {
+      // Handle error events (only when no content array)
+      const msg = extractErrorMessage(event.error) || extractErrorMessage(event.message) || 'Unknown error';
+      events.push({ type: 'error', message: msg });
     }
 
     return events;
@@ -403,12 +400,8 @@ export class KimiAgentPlugin extends BaseAgentPlugin {
   }
 
   override validateModel(model: string): string | null {
-    if (model === '' || model === undefined) {
+    if (model === '' || model.trim().length === 0) {
       return null;
-    }
-    // Kimi CLI accepts various model identifiers; basic validation only
-    if (typeof model !== 'string' || model.trim().length === 0) {
-      return 'Model name must be a non-empty string';
     }
     return null;
   }
