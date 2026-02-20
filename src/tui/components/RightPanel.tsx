@@ -580,7 +580,7 @@ function TimingSummary({
     );
   const inputTokens = usage?.inputTokens ?? 0;
   const outputTokens = usage?.outputTokens ?? 0;
-  const totalTokens = usage?.totalTokens ?? inputTokens + outputTokens;
+  const totalTokens = (usage?.totalTokens ?? 0) > 0 ? (usage?.totalTokens ?? 0) : inputTokens + outputTokens;
   const remainingTokens = hasUsageTelemetry ? usage?.remainingContextTokens : undefined;
   const contextWindow = hasUsageTelemetry ? usage?.contextWindowTokens : undefined;
   const remainingPercent = hasUsageTelemetry ? usage?.remainingContextPercent : undefined;
