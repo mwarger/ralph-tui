@@ -49,6 +49,7 @@ import type {
   MergeOperation,
   FileConflict,
   ConflictResolutionResult,
+  ParallelExecutorStatus,
 } from '../parallel/types.js';
 import type { ParallelEvent } from '../parallel/events.js';
 import { registerBuiltinAgents } from '../plugins/agents/builtin/index.js';
@@ -83,6 +84,25 @@ import { spawnSync } from 'node:child_process';
 import { basename } from 'node:path';
 import { getEnvExclusionReport, formatEnvExclusionReport } from '../plugins/agents/base.js';
 
+type PersistState = (state: PersistedSessionState) => void | Promise<void>;
+
+type ParallelFailureCarrier = {
+  failureMessage: string | null;
+};
+
+export function applyParallelFailureState(
+  currentState: PersistedSessionState,
+  parallelState: ParallelFailureCarrier,
+  failureMessage: string,
+  persistState: PersistState
+): PersistedSessionState {
+  const nextFailureMessage = parallelState.failureMessage ?? failureMessage;
+  parallelState.failureMessage = nextFailureMessage;
+  const nextState = failSession(currentState, nextFailureMessage);
+  persistState(nextState);
+  return nextState;
+}
+
 /**
  * Determine if all tasks are complete based on parallel/sequential mode state.
  *
@@ -104,6 +124,101 @@ export function isSessionComplete(
   totalTasks: number
 ): boolean {
   return parallelAllComplete ?? (tasksCompleted >= totalTasks);
+}
+
+/**
+ * Determine whether a worker result should be shown as completed-locally.
+ *
+ * A completed-locally task needs only an agent-level completion signal.
+ * Merge success/failure is tracked separately via merge events.
+ */
+export function shouldMarkCompletedLocally(
+  taskCompleted: boolean,
+  _commitCount: number
+): boolean {
+  return taskCompleted;
+}
+
+/**
+ * Compute the next completed-locally task ID set for a worker completion event.
+ */
+export function updateCompletedLocallyTaskIds(
+  completedLocallyTaskIds: Set<string>,
+  taskId: string,
+  taskCompleted: boolean,
+  commitCount: number
+): Set<string> {
+  if (shouldMarkCompletedLocally(taskCompleted, commitCount)) {
+    return new Set([...completedLocallyTaskIds, taskId]);
+  }
+
+  const nextCompletedLocally = new Set(completedLocallyTaskIds);
+  nextCompletedLocally.delete(taskId);
+  return nextCompletedLocally;
+}
+
+/**
+ * Apply persisted-session state changes when parallel execution emits completed.
+ *
+ * The executor can emit `parallel:completed` after interruption as part of shutdown,
+ * so completion must be based on final executor status.
+ */
+export function applyParallelCompletionState(
+  currentState: PersistedSessionState,
+  executorStatus: ParallelExecutorStatus
+): PersistedSessionState {
+  if (executorStatus === 'completed') {
+    return completeSession(currentState);
+  }
+
+  return {
+    ...currentState,
+    status: 'interrupted',
+    isPaused: false,
+    activeTaskIds: [],
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+/**
+ * Determine whether a parallel run is fully complete.
+ * Requires both completed status and completed task counts.
+ */
+export function isParallelExecutionComplete(
+  executorStatus: ParallelExecutorStatus,
+  totalTasksCompleted: number,
+  totalTasks: number
+): boolean {
+  return executorStatus === 'completed' && totalTasksCompleted >= totalTasks;
+}
+
+/**
+ * Apply task-tracking set updates after a conflict:resolved event.
+ *
+ * When resolution results are empty, the conflict was skipped and the task must
+ * remain in completed-locally state (not merged).
+ */
+export function applyConflictResolvedTaskTracking(
+  completedLocallyTaskIds: Set<string>,
+  mergedTaskIds: Set<string>,
+  taskId: string,
+  resolutionCount: number
+): { completedLocallyTaskIds: Set<string>; mergedTaskIds: Set<string> } {
+  if (resolutionCount < 1) {
+    return {
+      completedLocallyTaskIds,
+      mergedTaskIds,
+    };
+  }
+
+  const nextCompletedLocally = new Set(completedLocallyTaskIds);
+  nextCompletedLocally.delete(taskId);
+  const nextMerged = new Set([...mergedTaskIds, taskId]);
+
+  return {
+    completedLocallyTaskIds: nextCompletedLocally,
+    mergedTaskIds: nextMerged,
+  };
 }
 
 /**
@@ -994,6 +1109,8 @@ interface RunAppWrapperProps {
   activeWorkerCount?: number;
   /** Total number of workers */
   totalWorkerCount?: number;
+  /** Failure message for parallel execution */
+  parallelFailureMessage?: string;
   /** Callback to pause parallel execution */
   onParallelPause?: () => void;
   /** Callback to resume parallel execution */
@@ -1049,6 +1166,7 @@ function RunAppWrapper({
   parallelCompletedLocallyTaskIds,
   parallelAutoCommitSkippedTaskIds,
   parallelMergedTaskIds,
+  parallelFailureMessage,
   activeWorkerCount,
   totalWorkerCount,
   onParallelPause,
@@ -1104,6 +1222,26 @@ function RunAppWrapper({
   const trackerRegistry = getTrackerRegistry();
   const availableAgents = agentRegistry.getRegisteredPlugins();
   const availableTrackers = trackerRegistry.getRegisteredPlugins();
+  const configuredAgentNames = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          (storedConfig?.agents ?? [])
+            .map((agent) => agent.name)
+            .filter((name): name is string => typeof name === 'string' && name.length > 0),
+        ),
+      ),
+    [storedConfig?.agents],
+  );
+  const availableAgentNames = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          [...availableAgents.map((agent) => agent.id), ...configuredAgentNames],
+        ),
+      ),
+    [availableAgents, configuredAgentNames],
+  );
 
   // Handle settings save
   const handleSaveSettings = async (newConfig: StoredConfig): Promise<void> => {
@@ -1211,7 +1349,7 @@ function RunAppWrapper({
       initialTasks={tasks}
       onStart={onStart}
       storedConfig={storedConfig}
-      availableAgents={availableAgents}
+      availableAgents={availableAgentNames}
       availableTrackers={availableTrackers}
       onSaveSettings={handleSaveSettings}
       onLoadEpics={handleLoadEpics}
@@ -1251,6 +1389,7 @@ function RunAppWrapper({
       parallelCompletedLocallyTaskIds={parallelCompletedLocallyTaskIds}
       parallelAutoCommitSkippedTaskIds={parallelAutoCommitSkippedTaskIds}
       parallelMergedTaskIds={parallelMergedTaskIds}
+      parallelFailureMessage={parallelFailureMessage}
       activeWorkerCount={activeWorkerCount}
       totalWorkerCount={totalWorkerCount}
       onParallelPause={onParallelPause}
@@ -1302,6 +1441,8 @@ async function runWithTui(
   let cancelledCallback: (() => void) | null = null;
   let resolveQuitPromise: (() => void) | null = null;
   let engineStarted = false;
+  let executionPromise: Promise<void> | null = null;
+  let shutdownPromise: Promise<void> | null = null;
 
   const renderer = await createCliRenderer({
     exitOnCtrlC: false, // We handle this ourselves
@@ -1401,22 +1542,63 @@ async function runWithTui(
   // Graceful shutdown: reset active tasks, save state, clean up, and resolve the quit promise
   // This is called when the user explicitly quits (q key or Ctrl+C confirmation)
   const gracefulShutdown = async (): Promise<void> => {
-    // Reset any active (in_progress) tasks back to open
-    // This prevents tasks from being stuck in_progress after shutdown
-    const activeTasks = getActiveTasks(currentState);
-    if (activeTasks.length > 0) {
-      const resetCount = await engine.resetTasksToOpen(activeTasks);
-      if (resetCount > 0) {
-        // Clear active tasks from state now that they've been reset
-        currentState = clearActiveTasks(currentState);
-      }
+    if (shutdownPromise) {
+      await shutdownPromise;
+      return;
     }
 
-    // Save current state (may be completed, interrupted, etc.)
-    await savePersistedSession(currentState);
-    await cleanup();
-    // Resolve the quit promise to let the main function continue
-    resolveQuitPromise?.();
+    shutdownPromise = (async () => {
+      const status = engine.getStatus();
+      if (status === 'running' || status === 'pausing' || status === 'paused' || status === 'stopping') {
+        try {
+          await engine.stop();
+        } catch {
+          // Keep shutdown resilient even if stop() fails.
+        }
+      }
+
+      const exec = executionPromise;
+      if (exec) {
+        try {
+          await exec;
+        } catch {
+          // Execution errors are already surfaced through engine events.
+        }
+      }
+
+      try {
+        // Reset any active (in_progress) tasks back to open.
+        // This prevents tasks from being stuck in_progress after shutdown.
+        const activeTasks = getActiveTasks(currentState);
+        if (activeTasks.length > 0) {
+          const resetCount = await engine.resetTasksToOpen(activeTasks);
+          if (resetCount > 0) {
+            // Clear active tasks from state now that they've been reset.
+            currentState = clearActiveTasks(currentState);
+          }
+        }
+      } catch {
+        // Continue shutdown even if task reset fails.
+      }
+
+      try {
+        // Save current state (may be completed, interrupted, etc.)
+        await savePersistedSession(currentState);
+      } catch {
+        // Continue shutdown even if state persistence fails.
+      }
+
+      try {
+        await cleanup();
+      } catch {
+        // Ensure quit promise still resolves when cleanup fails.
+      }
+
+      // Resolve the quit promise to let the main function continue
+      resolveQuitPromise?.();
+    })();
+
+    await shutdownPromise;
   };
 
   // Force quit: immediate exit
@@ -1450,7 +1632,15 @@ async function runWithTui(
     engineStarted = true;
     // Start the engine (this runs the loop in the background)
     // The TUI will show running status via engine events
-    await engine.start();
+    const runPromise = engine.start();
+    executionPromise = runPromise;
+    try {
+      await runPromise;
+    } finally {
+      if (executionPromise === runPromise) {
+        executionPromise = null;
+      }
+    }
   };
 
   // Handler to update persisted state and save it
@@ -1524,6 +1714,7 @@ async function runWithTui(
   });
 
   clearInterval(checkCallbacks);
+  process.removeListener('SIGTERM', gracefulShutdown);
 
   return currentState;
 }
@@ -1571,6 +1762,7 @@ async function runParallelWithTui(
     showConflicts: false,
     /** Maps task IDs to their assigned worker IDs for output routing */
     taskIdToWorkerId: new Map<string, string>(),
+    failureMessage: null as string | null,
     /** Task IDs that completed locally but merge failed (shows ⚠ in TUI) */
     completedLocallyTaskIds: new Set<string>(),
     /** Task IDs where auto-commit was skipped (e.g., files were gitignored) */
@@ -1587,6 +1779,63 @@ async function runParallelWithTui(
   // When null, events are queued implicitly in the shared state object and picked up
   // on the next render (no events are lost even if the trigger isn't set yet).
   let triggerRerender: (() => void) | null = null;
+  let executionPromise: Promise<void> | null = null;
+  let shutdownPromise: Promise<void> | null = null;
+
+  const resetParallelStateForRestart = (): void => {
+    parallelState.failureMessage = null;
+    parallelState.workers = [];
+    parallelState.workerOutputs = new Map();
+    parallelState.mergeQueue = [];
+    parallelState.currentGroup = 0;
+    parallelState.totalGroups = 0;
+    parallelState.conflicts = [];
+    parallelState.conflictResolutions = [];
+    parallelState.conflictTaskId = '';
+    parallelState.conflictTaskTitle = '';
+    parallelState.aiResolving = false;
+    parallelState.currentlyResolvingFile = '';
+    parallelState.showConflicts = false;
+    parallelState.taskIdToWorkerId = new Map();
+    parallelState.completedLocallyTaskIds = new Set();
+    parallelState.autoCommitSkippedTaskIds = new Set();
+    parallelState.mergedTaskIds = new Set();
+    parallelState.sessionBranch = null;
+    parallelState.originalBranch = null;
+  };
+
+  const startParallelExecution = (): void => {
+    const runPromise = parallelExecutor.execute().then(() => {
+      // Execution finished — TUI stays open for user review
+      triggerRerender?.();
+    }).catch(() => {
+      // Error already emitted as parallel:failed event, but keep this as a fallback
+      // for engines that reject without emitting the event.
+      currentState = applyParallelFailureState(
+        currentState,
+        parallelState,
+        'Parallel execution failed before startup',
+        (state) => {
+          savePersistedSession(state).catch(() => {});
+        }
+      );
+      triggerRerender?.();
+    });
+
+    executionPromise = runPromise;
+    void runPromise.finally(() => {
+      if (executionPromise === runPromise) {
+        executionPromise = null;
+      }
+    });
+  };
+
+  const handleShutdownError = (context: string, error: unknown): void => {
+    const message = error instanceof Error ? error.message : String(error);
+    // Surface a best-effort message in the parallel UI instead of throwing.
+    parallelState.failureMessage = parallelState.failureMessage ?? `${context}: ${message}`;
+    triggerRerender?.();
+  };
 
   const renderer = await createCliRenderer({
     exitOnCtrlC: false,
@@ -1600,6 +1849,7 @@ async function runParallelWithTui(
   parallelExecutor.on((event: ParallelEvent) => {
     switch (event.type) {
       case 'parallel:started':
+        parallelState.failureMessage = null;
         parallelState.totalGroups = event.totalGroups;
         break;
 
@@ -1659,15 +1909,12 @@ async function runParallelWithTui(
         // Remove task from active list in persisted session state
         currentState = removeActiveTask(currentState, event.result.task.id);
         savePersistedSession(currentState).catch(() => {});
-        // Track tasks that the worker marked as completed (agent said COMPLETED)
-        // These will be marked as "completedLocally" if merge subsequently fails
-        if (event.result.taskCompleted) {
-          // Create new Set so React detects the change (Set mutation doesn't change reference)
-          parallelState.completedLocallyTaskIds = new Set([
-            ...parallelState.completedLocallyTaskIds,
-            event.result.task.id,
-          ]);
-        }
+        parallelState.completedLocallyTaskIds = updateCompletedLocallyTaskIds(
+          parallelState.completedLocallyTaskIds,
+          event.result.task.id,
+          event.result.taskCompleted,
+          event.result.commitCount
+        );
         break;
 
       case 'worker:failed':
@@ -1747,26 +1994,34 @@ async function runParallelWithTui(
         parallelState.showConflicts = false;
         // Refresh merge queue to show updated status (conflicted -> completed)
         parallelState.mergeQueue = [...parallelExecutor.getState().mergeQueue];
-        // Task successfully merged after conflict resolution — update tracking sets
-        // Remove from completedLocally (no more ⚠ warning) and add to merged (shows ✓)
-        const resolvedSet = new Set(parallelState.completedLocallyTaskIds);
-        resolvedSet.delete(event.taskId);
-        parallelState.completedLocallyTaskIds = resolvedSet;
-        parallelState.mergedTaskIds = new Set([
-          ...parallelState.mergedTaskIds,
+        const taskTracking = applyConflictResolvedTaskTracking(
+          parallelState.completedLocallyTaskIds,
+          parallelState.mergedTaskIds,
           event.taskId,
-        ]);
+          event.results.length
+        );
+        parallelState.completedLocallyTaskIds = taskTracking.completedLocallyTaskIds;
+        parallelState.mergedTaskIds = taskTracking.mergedTaskIds;
         break;
       }
 
       case 'parallel:completed':
-        currentState = completeSession(currentState);
+        currentState = applyParallelCompletionState(
+          currentState,
+          parallelExecutor.getState().status
+        );
         savePersistedSession(currentState).catch(() => {});
         break;
 
       case 'parallel:failed':
-        currentState = failSession(currentState);
-        savePersistedSession(currentState).catch(() => {});
+        currentState = applyParallelFailureState(
+          currentState,
+          parallelState,
+          event.error,
+          (state) => {
+            savePersistedSession(state).catch(() => {});
+          }
+        );
         break;
     }
 
@@ -1797,10 +2052,44 @@ async function runParallelWithTui(
 
   // Graceful shutdown
   const gracefulShutdown = async (): Promise<void> => {
-    await parallelExecutor.stop();
-    await savePersistedSession(currentState);
-    await cleanup();
-    resolveQuitPromise?.();
+    if (shutdownPromise) {
+      await shutdownPromise;
+      return;
+    }
+
+    shutdownPromise = (async () => {
+      // Wait for execute() to unwind so cleanup() runs (worktrees, branches, tags).
+      const exec = executionPromise;
+      if (exec) {
+        try {
+          await parallelExecutor.stop();
+        } catch (error) {
+          handleShutdownError('Failed to stop parallel executor', error);
+        }
+
+        try {
+          await exec;
+        } catch (error) {
+          handleShutdownError('Parallel executor failed during shutdown', error);
+        }
+      }
+
+      try {
+        await savePersistedSession(currentState);
+      } catch (error) {
+        handleShutdownError('Failed to persist session during shutdown', error);
+      }
+
+      try {
+        await cleanup();
+      } catch (error) {
+        handleShutdownError('Failed to cleanup TUI during shutdown', error);
+      }
+
+      resolveQuitPromise?.();
+    })();
+
+    await shutdownPromise;
   };
 
   // Force quit
@@ -1890,25 +2179,43 @@ async function runParallelWithTui(
         parallelCompletedLocallyTaskIds={parallelState.completedLocallyTaskIds}
         parallelAutoCommitSkippedTaskIds={parallelState.autoCommitSkippedTaskIds}
         parallelMergedTaskIds={parallelState.mergedTaskIds}
+        parallelFailureMessage={parallelState.failureMessage ?? undefined}
         activeWorkerCount={parallelState.workers.filter((w) => w.status === 'running').length}
         totalWorkerCount={parallelState.workers.length}
         onParallelPause={() => parallelExecutor.pause()}
         onParallelResume={() => parallelExecutor.resume()}
         onParallelKill={async () => {
-          await parallelExecutor.stop();
+          const exec = executionPromise;
+          if (exec) {
+            try {
+              await parallelExecutor.stop();
+            } catch (error) {
+              handleShutdownError('Failed to stop parallel executor', error);
+            }
+
+            try {
+              await exec;
+            } catch (error) {
+              handleShutdownError('Parallel executor failed while stopping', error);
+            }
+          }
         }}
         onParallelStart={() => {
+          if (executionPromise) {
+            return;
+          }
           // Reset executor state and re-run
-          // Use new instances instead of .clear() so React detects state changes
-          parallelState.workers = [];
-          parallelState.workerOutputs = new Map();
-          parallelState.taskIdToWorkerId = new Map();
+          resetParallelStateForRestart();
+          currentState = {
+            ...currentState,
+            status: 'running',
+            isPaused: false,
+            pausedAt: undefined,
+            updatedAt: new Date().toISOString(),
+          };
+          savePersistedSession(currentState).catch(() => {});
           parallelExecutor.reset();
-          parallelExecutor.execute().then(() => {
-            triggerRerender?.();
-          }).catch(() => {
-            triggerRerender?.();
-          });
+          startParallelExecution();
         }}
         onConflictRetry={async () => {
           // Re-attempt AI conflict resolution
@@ -1953,13 +2260,7 @@ async function runParallelWithTui(
   // Start parallel execution (non-blocking — runs in background while TUI renders).
   // Errors are reported via the parallel:failed event, which updates the shared state.
   // We must NOT use console.error here — it would corrupt the TUI output.
-  parallelExecutor.execute().then(() => {
-    // Execution finished — TUI stays open for user review
-    triggerRerender?.();
-  }).catch(() => {
-    // Error already emitted as parallel:failed event; just trigger a re-render
-    triggerRerender?.();
-  });
+  startParallelExecution();
 
   // Wait for user to quit
   await new Promise<void>((resolve) => {
@@ -1967,6 +2268,7 @@ async function runParallelWithTui(
   });
 
   clearInterval(checkCallbacks);
+  process.removeListener('SIGTERM', gracefulShutdown);
 
   return currentState;
 }
@@ -2869,6 +3171,9 @@ export async function executeRunCommand(args: string[]): Promise<void> {
         originalBranchForGuidance = parallelExecutor.getOriginalBranch();
       } else {
         // Parallel headless mode — log events to console
+        let parallelSignalInterrupted = false;
+        let parallelExecutionPromise: Promise<void> | null = null;
+
         parallelExecutor.on((event) => {
           const time = new Date(event.timestamp).toLocaleTimeString();
           switch (event.type) {
@@ -2916,10 +3221,19 @@ export async function executeRunCommand(args: string[]): Promise<void> {
 
         // Signal handlers for graceful shutdown in parallel headless mode
         const handleParallelSignal = async (): Promise<void> => {
+          if (parallelSignalInterrupted) {
+            return;
+          }
+          parallelSignalInterrupted = true;
           console.log('\n[INFO] [parallel] Received signal, stopping parallel execution...');
 
           // Stop the parallel executor
           await parallelExecutor.stop();
+
+          // Wait for execute() to unwind so cleanup (worktrees/branches/tags) completes.
+          if (parallelExecutionPromise) {
+            await parallelExecutionPromise.catch(() => {});
+          }
 
           // Reset any in_progress tasks back to open
           const activeTasks = getActiveTasks(persistedState);
@@ -2938,19 +3252,19 @@ export async function executeRunCommand(args: string[]): Promise<void> {
           // Save interrupted state
           persistedState = { ...persistedState, status: 'interrupted' };
           await savePersistedSession(persistedState);
-
-          process.exit(0);
         };
 
         process.on('SIGINT', handleParallelSignal);
         process.on('SIGTERM', handleParallelSignal);
 
         try {
-          await parallelExecutor.execute();
+          parallelExecutionPromise = parallelExecutor.execute();
+          await parallelExecutionPromise;
           // Get branch info after execution completes
           sessionBranchForGuidance = parallelExecutor.getSessionBranch();
           originalBranchForGuidance = parallelExecutor.getOriginalBranch();
         } finally {
+          parallelExecutionPromise = null;
           // Remove handlers after execution completes
           process.removeListener('SIGINT', handleParallelSignal);
           process.removeListener('SIGTERM', handleParallelSignal);
@@ -2958,7 +3272,11 @@ export async function executeRunCommand(args: string[]): Promise<void> {
       }
 
       // Show completion guidance if a session branch was created
-      if (sessionBranchForGuidance && originalBranchForGuidance) {
+      if (
+        sessionBranchForGuidance &&
+        originalBranchForGuidance &&
+        parallelExecutor.getState().status === 'completed'
+      ) {
         console.log('');
         console.log('═══════════════════════════════════════════════════════════════');
         console.log('                   Session Complete!                            ');
@@ -2985,7 +3303,11 @@ export async function executeRunCommand(args: string[]): Promise<void> {
 
       // Set parallel completion state for final check
       const pState = parallelExecutor.getState();
-      parallelAllComplete = pState.totalTasksCompleted >= pState.totalTasks || pState.status === 'completed';
+      parallelAllComplete = isParallelExecutionComplete(
+        pState.status,
+        pState.totalTasksCompleted,
+        pState.totalTasks
+      );
     } else if (config.showTui) {
       // Sequential TUI mode (existing path)
       // Pass tasks for initial TUI display in "ready" state

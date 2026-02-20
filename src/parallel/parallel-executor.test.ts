@@ -13,6 +13,7 @@ import type { TrackerTask, TrackerPlugin } from '../plugins/trackers/types.js';
 import type { RalphConfig } from '../config/types.js';
 import type { ParallelEvent } from './events.js';
 import type { AiResolverCallback } from './conflict-resolver.js';
+import type { WorkerResult, TaskGraphAnalysis } from './types.js';
 
 /**
  * Helper to create a minimal TrackerTask.
@@ -172,6 +173,38 @@ function createMockConfig(): RalphConfig {
       retryDelayMs: 1000,
       continueOnNonZeroExit: false,
     },
+  };
+}
+
+/** Create a worker result for targeted private-method tests. */
+function createWorkerResult(task: TrackerTask, overrides: Partial<WorkerResult> = {}): WorkerResult {
+  return {
+    workerId: 'w0-0',
+    task,
+    success: true,
+    iterationsRun: 1,
+    taskCompleted: true,
+    durationMs: 1000,
+    branchName: `ralph-parallel/${task.id}`,
+    commitCount: 1,
+    ...overrides,
+  };
+}
+
+/** Build a minimal TaskGraphAnalysis object for executeGroup testing. */
+function createSingleGroupAnalysis(task: TrackerTask): TaskGraphAnalysis {
+  return {
+    nodes: new Map(),
+    groups: [{
+      index: 0,
+      tasks: [task],
+      depth: 0,
+      maxPriority: task.priority,
+    }],
+    cyclicTaskIds: [],
+    actionableTaskCount: 1,
+    maxParallelism: 1,
+    recommendParallel: true,
   };
 }
 
@@ -374,6 +407,178 @@ describe('ParallelExecutor class', () => {
       const state = executor.getState();
       expect(state.status).toBe('idle');
       expect(state.workers).toEqual([]);
+    });
+  });
+
+  describe('merge failure handling', () => {
+    test('handleMergeFailure resets task to open even when requeue limit is reached', async () => {
+      const tracker = createMockTracker();
+      const statusUpdates: string[] = [];
+      tracker.updateTaskStatus = async (taskId) => {
+        statusUpdates.push(taskId);
+        return undefined;
+      };
+
+      const executor = new ParallelExecutor(createMockConfig(), tracker, {
+        maxRequeueCount: 1,
+      });
+      const mergeFailure = createWorkerResult(task('A'));
+
+      (executor as any).requeueCounts.set('A', 1); // already at cap
+      await (executor as any).handleMergeFailure(mergeFailure);
+
+      expect((executor as any).requeueCounts.get('A')).toBe(1);
+      expect(statusUpdates).toEqual(['A']);
+    });
+
+    test('handleMergeFailure increments requeue count up to maxRequeueCount', async () => {
+      const tracker = createMockTracker();
+      let updateCalls = 0;
+      tracker.updateTaskStatus = async () => {
+        updateCalls++;
+        return undefined;
+      };
+
+      const executor = new ParallelExecutor(createMockConfig(), tracker, {
+        maxRequeueCount: 2,
+      });
+      const mergeFailure = createWorkerResult(task('A'));
+
+      await (executor as any).handleMergeFailure(mergeFailure);
+      await (executor as any).handleMergeFailure(mergeFailure);
+      await (executor as any).handleMergeFailure(mergeFailure);
+
+      expect((executor as any).requeueCounts.get('A')).toBe(2);
+      expect(updateCalls).toBe(3);
+    });
+
+    test('executeGroup attempts merge for completed results even when commitCount is zero', async () => {
+      const tracker = createMockTracker();
+      const completedTaskIds: string[] = [];
+      tracker.completeTask = async (taskId) => {
+        completedTaskIds.push(taskId);
+        return { success: true, message: 'Task completed' };
+      };
+
+      const executor = new ParallelExecutor(createMockConfig(), tracker, {
+        maxRequeueCount: 1,
+      });
+      const taskA = task('A');
+      const group = {
+        index: 0,
+        tasks: [taskA],
+        depth: 0,
+      };
+      const events: ParallelEvent[] = [];
+      executor.on((event) => events.push(event));
+
+      (executor as any).taskGraph = createSingleGroupAnalysis(taskA);
+      (executor as any).batchTasks = () => [[taskA]];
+      (executor as any).executeBatch = async () => [
+        createWorkerResult(taskA, { commitCount: 0, taskCompleted: true, success: true }),
+      ];
+      (executor as any).mergeEngine = {
+        enqueue: () => {},
+        getQueue: () => [],
+        processNext: async () => ({
+          operationId: 'op-1',
+          success: true,
+          strategy: 'fast-forward',
+          hadConflicts: false,
+          filesChanged: 1,
+          durationMs: 1,
+        }),
+      };
+
+      await (executor as any).executeGroup(group, 0);
+
+      const completedEvent = events.find((e) => e.type === 'parallel:group-completed');
+      expect(completedEvent?.type).toBe('parallel:group-completed');
+      if (completedEvent?.type === 'parallel:group-completed') {
+        expect(completedEvent.tasksCompleted).toBe(1);
+        expect(completedEvent.tasksFailed).toBe(0);
+        expect(completedEvent.mergesCompleted).toBe(1);
+        expect(completedEvent.mergesFailed).toBe(0);
+      }
+
+      expect(completedTaskIds).toContain('A');
+      expect((executor as any).requeueCounts.has('A')).toBe(false);
+    });
+
+    test('executeGroup resets failed worker tasks to open', async () => {
+      const tracker = createMockTracker();
+      const statusUpdates: Array<{ taskId: string; status: string }> = [];
+      tracker.updateTaskStatus = async (taskId, status) => {
+        statusUpdates.push({ taskId, status });
+        return undefined;
+      };
+
+      const executor = new ParallelExecutor(createMockConfig(), tracker, {
+        maxRequeueCount: 1,
+      });
+      const taskA = task('A');
+      const group = { index: 0, tasks: [taskA], depth: 0 };
+
+      (executor as any).taskGraph = createSingleGroupAnalysis(taskA);
+      (executor as any).batchTasks = () => [[taskA]];
+      (executor as any).executeBatch = async () => [
+        createWorkerResult(taskA, { success: false, taskCompleted: false, commitCount: 0 }),
+      ];
+
+      await (executor as any).executeGroup(group, 0);
+
+      expect(statusUpdates).toContainEqual({ taskId: 'A', status: 'open' });
+      expect((executor as any).totalTasksFailed).toBe(1);
+    });
+
+    test('executeGroup counts merge failure as failed task (not completed)', async () => {
+      const tracker = createMockTracker();
+      const statusUpdates: Array<{ taskId: string; status: string }> = [];
+      tracker.updateTaskStatus = async (taskId, status) => {
+        statusUpdates.push({ taskId, status });
+        return undefined;
+      };
+
+      const executor = new ParallelExecutor(createMockConfig(), tracker, {
+        maxRequeueCount: 1,
+      });
+      const taskA = task('A');
+      const group = { index: 0, tasks: [taskA], depth: 0 };
+      const events: ParallelEvent[] = [];
+      executor.on((event) => events.push(event));
+
+      (executor as any).taskGraph = createSingleGroupAnalysis(taskA);
+      (executor as any).batchTasks = () => [[taskA]];
+      (executor as any).executeBatch = async () => [
+        createWorkerResult(taskA, { success: true, taskCompleted: true, commitCount: 1 }),
+      ];
+      (executor as any).mergeEngine = {
+        enqueue: () => {},
+        getQueue: () => [],
+        processNext: async () => ({
+          operationId: 'op-1',
+          success: false,
+          strategy: 'merge-commit',
+          hadConflicts: false,
+          filesChanged: 0,
+          durationMs: 1,
+          error: 'merge failed',
+        }),
+      };
+
+      await (executor as any).executeGroup(group, 0);
+
+      const completedEvent = events.find((e) => e.type === 'parallel:group-completed');
+      expect(completedEvent?.type).toBe('parallel:group-completed');
+      if (completedEvent?.type === 'parallel:group-completed') {
+        expect(completedEvent.tasksCompleted).toBe(0);
+        expect(completedEvent.tasksFailed).toBe(1);
+        expect(completedEvent.mergesCompleted).toBe(0);
+        expect(completedEvent.mergesFailed).toBe(1);
+      }
+      expect((executor as any).totalTasksCompleted).toBe(0);
+      expect((executor as any).totalTasksFailed).toBe(1);
+      expect(statusUpdates).toContainEqual({ taskId: 'A', status: 'open' });
     });
   });
 });

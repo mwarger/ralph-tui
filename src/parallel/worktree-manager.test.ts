@@ -74,6 +74,64 @@ describe('WorktreeManager', () => {
     fs.rmSync(repoDir, { recursive: true, force: true });
   });
 
+  type DiskCheckAccessor = {
+    checkDiskSpace: () => Promise<void>;
+    getAvailableDiskSpaceFromStatFs: () => Promise<number | null>;
+    getAvailableDiskSpaceFromDf: () => number | null;
+  };
+
+  describe('disk space checks', () => {
+    test('falls back to df when statfs reports zero but df reports sufficient space', async () => {
+      const minFreeDiskSpace = 500 * 1024 * 1024;
+      manager = new WorktreeManager({
+        cwd: repoDir,
+        worktreeDir: '.ralph-tui/worktrees',
+        maxWorktrees: 4,
+        minFreeDiskSpace,
+      });
+
+      const managerWithDiskCheck = manager as unknown as DiskCheckAccessor;
+      const originalStatFs = managerWithDiskCheck.getAvailableDiskSpaceFromStatFs;
+      const originalDf = managerWithDiskCheck.getAvailableDiskSpaceFromDf;
+
+      managerWithDiskCheck.getAvailableDiskSpaceFromStatFs = async () => 0;
+      managerWithDiskCheck.getAvailableDiskSpaceFromDf = () => minFreeDiskSpace + 1024 * 1024;
+
+      try {
+        await expect(managerWithDiskCheck.checkDiskSpace()).resolves.toBeUndefined();
+      } finally {
+        managerWithDiskCheck.getAvailableDiskSpaceFromStatFs = originalStatFs;
+        managerWithDiskCheck.getAvailableDiskSpaceFromDf = originalDf;
+      }
+    });
+
+    test('throws when both statfs and df report insufficient space', async () => {
+      const minFreeDiskSpace = 500 * 1024 * 1024;
+      manager = new WorktreeManager({
+        cwd: repoDir,
+        worktreeDir: '.ralph-tui/worktrees',
+        maxWorktrees: 4,
+        minFreeDiskSpace,
+      });
+
+      const managerWithDiskCheck = manager as unknown as DiskCheckAccessor;
+      const originalStatFs = managerWithDiskCheck.getAvailableDiskSpaceFromStatFs;
+      const originalDf = managerWithDiskCheck.getAvailableDiskSpaceFromDf;
+
+      managerWithDiskCheck.getAvailableDiskSpaceFromStatFs = async () => 0;
+      managerWithDiskCheck.getAvailableDiskSpaceFromDf = () => minFreeDiskSpace / 2;
+
+      try {
+        await expect(managerWithDiskCheck.checkDiskSpace()).rejects.toThrow(
+          'Insufficient disk space for worktree'
+        );
+      } finally {
+        managerWithDiskCheck.getAvailableDiskSpaceFromStatFs = originalStatFs;
+        managerWithDiskCheck.getAvailableDiskSpaceFromDf = originalDf;
+      }
+    });
+  });
+
   describe('acquire', () => {
     test('creates a worktree with a dedicated branch', async () => {
       const info = await manager.acquire('w1', 'task-001');
@@ -178,6 +236,20 @@ describe('WorktreeManager', () => {
     test('does nothing for unknown worktree ID', () => {
       // Should not throw
       manager.release('nonexistent');
+    });
+
+    test('allows acquiring a new worktree after release without cleanupAll', async () => {
+      const smallManager = new WorktreeManager({
+        cwd: repoDir,
+        maxWorktrees: 1,
+      });
+
+      const first = await smallManager.acquire('w1', 'task-001');
+      smallManager.release(first.id);
+
+      await expect(
+        smallManager.acquire('w2', 'task-002')
+      ).resolves.toBeTruthy();
     });
   });
 

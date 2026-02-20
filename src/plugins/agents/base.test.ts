@@ -10,12 +10,16 @@ import {
   beforeEach,
   afterEach,
 } from 'bun:test';
+import { mkdtemp, writeFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 // Import the module to test internal functions via a workaround
 // We'll test the public interface and behavior
 import {
   BaseAgentPlugin,
   DEFAULT_ENV_EXCLUDE_PATTERNS,
+  findCommandPath,
   getEnvExclusionReport,
   formatEnvExclusionReport,
 } from './base.js';
@@ -146,6 +150,29 @@ describe('BaseAgentPlugin', () => {
 
   beforeEach(() => {
     agent = new TestAgentPlugin();
+  });
+
+  describe('findCommandPath', () => {
+    test('resolves explicit absolute command paths directly on the filesystem', async () => {
+      const tempDir = await mkdtemp(join(tmpdir(), 'ralph-find-cmd-'));
+      const commandPath = join(tempDir, 'claude-test.bin');
+      try {
+        await writeFile(commandPath, '');
+        const result = await findCommandPath(commandPath);
+
+        expect(result.found).toBe(true);
+        expect(result.path).toBe(commandPath);
+      } finally {
+        await rm(tempDir, { recursive: true, force: true });
+      }
+    });
+
+    test('returns not found for missing explicit command paths', async () => {
+      const result = await findCommandPath('/definitely/not/a/real/command');
+
+      expect(result.found).toBe(false);
+      expect(result.path).toBe('');
+    });
   });
 
   afterEach(async () => {

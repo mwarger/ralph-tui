@@ -47,15 +47,17 @@ interface BrTaskJson {
     id: string;
     title: string;
     status: string;
-    /** br serializes dep_type as "type" via serde rename */
-    type: 'blocks' | 'parent-child';
+    priority: number;
+    /** br show --json uses "dependency_type" (not "type") */
+    dependency_type: 'blocks' | 'parent-child';
   }>;
   dependents?: Array<{
     id: string;
     title: string;
     status: string;
-    /** br serializes dep_type as "type" via serde rename */
-    type: 'blocks' | 'parent-child';
+    priority: number;
+    /** br show --json uses "dependency_type" (not "type") */
+    dependency_type: 'blocks' | 'parent-child';
   }>;
 }
 
@@ -142,9 +144,17 @@ function mapStatus(brStatus: string): TrackerTaskStatus {
     in_progress: 'in_progress',
     closed: 'completed',
     cancelled: 'cancelled',
+    tombstone: 'cancelled',
   };
 
   return statusMap[brStatus] ?? 'open';
+}
+
+/**
+ * Check whether a br status represents a soft-deleted (tombstone) issue.
+ */
+function isTombstone(brStatus: string): boolean {
+  return brStatus === 'tombstone';
 }
 
 /**
@@ -180,7 +190,7 @@ function brTaskToTask(task: BrTaskJson): TrackerTask {
 
   if (task.dependencies) {
     for (const dep of task.dependencies) {
-      if (dep.type === 'blocks') {
+      if (dep.dependency_type === 'blocks') {
         dependsOn.push(dep.id);
       }
     }
@@ -188,7 +198,7 @@ function brTaskToTask(task: BrTaskJson): TrackerTask {
 
   if (task.dependents) {
     for (const dep of task.dependents) {
-      if (dep.type === 'blocks') {
+      if (dep.dependency_type === 'blocks') {
         blocks.push(dep.id);
       }
     }
@@ -276,6 +286,14 @@ export class BeadsRustTrackerPlugin extends BaseTrackerPlugin {
   }
 
   /**
+   * Set the epic ID for filtering tasks.
+   * Used when user selects an epic from the TUI.
+   */
+  setEpicId(epicId: string): void {
+    this.epicId = epicId;
+  }
+
+  /**
    * Detect if beads-rust is available in the current environment.
    * Checks for .beads/ directory and br binary.
    */
@@ -357,6 +375,9 @@ export class BeadsRustTrackerPlugin extends BaseTrackerPlugin {
       return [];
     }
 
+    // Filter out tombstoned (soft-deleted) issues before conversion
+    tasksJson = tasksJson.filter((t) => !isTombstone(t.status));
+
     let tasks = tasksJson.map(brTaskToTask);
 
     // Enrich tasks with dependency data from br dep list.
@@ -409,6 +430,9 @@ export class BeadsRustTrackerPlugin extends BaseTrackerPlugin {
       return [];
     }
 
+    // Filter out tombstoned (soft-deleted) epics
+    tasksJson = tasksJson.filter((t) => !isTombstone(t.status));
+
     const tasks = tasksJson.map(brTaskToTask);
     return tasks.filter(
       (t) =>
@@ -436,6 +460,10 @@ export class BeadsRustTrackerPlugin extends BaseTrackerPlugin {
     }
 
     if (tasksJson.length === 0) {
+      return undefined;
+    }
+
+    if (isTombstone(tasksJson[0]!.status)) {
       return undefined;
     }
 
@@ -584,6 +612,9 @@ export class BeadsRustTrackerPlugin extends BaseTrackerPlugin {
       console.error('Failed to parse br ready output:', err);
       return undefined;
     }
+
+    // Filter out tombstoned (soft-deleted) issues
+    tasksJson = tasksJson.filter((t) => !isTombstone(t.status));
 
     if (tasksJson.length === 0) {
       return undefined;
@@ -753,7 +784,7 @@ export class BeadsRustTrackerPlugin extends BaseTrackerPlugin {
 
       if (epic.dependents) {
         const children = epic.dependents.filter(
-          (d) => d.type === 'parent-child'
+          (d) => d.dependency_type === 'parent-child' && !isTombstone(d.status)
         );
         totalCount = children.length;
         completedCount = children.filter(

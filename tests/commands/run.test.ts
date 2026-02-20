@@ -4,7 +4,16 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach, mock, spyOn } from 'bun:test';
-import { parseRunArgs, printRunHelp, isSessionComplete } from '../../src/commands/run.jsx';
+import {
+  parseRunArgs,
+  printRunHelp,
+  isSessionComplete,
+  shouldMarkCompletedLocally,
+  updateCompletedLocallyTaskIds,
+  applyParallelCompletionState,
+  isParallelExecutionComplete,
+  applyConflictResolvedTaskTracking,
+} from '../../src/commands/run.jsx';
 
 describe('run command', () => {
   describe('parseRunArgs', () => {
@@ -448,6 +457,134 @@ describe('run command', () => {
       const output = consoleErrorOutput.join('\n');
       expect(output).toContain('ralph-tui convert --to json --input ./docs/feature.md');
       expect(output).toContain('ralph-tui convert --to beads --input ./docs/feature.md');
+    });
+  });
+
+  describe('shouldMarkCompletedLocally', () => {
+    test('returns true when task completed with at least one commit', () => {
+      expect(shouldMarkCompletedLocally(true, 1)).toBe(true);
+    });
+
+    test('returns true when task completed but no commits were created', () => {
+      expect(shouldMarkCompletedLocally(true, 0)).toBe(true);
+    });
+
+    test('returns false when task did not complete regardless of commit count', () => {
+      expect(shouldMarkCompletedLocally(false, 0)).toBe(false);
+      expect(shouldMarkCompletedLocally(false, 3)).toBe(false);
+    });
+  });
+
+  describe('updateCompletedLocallyTaskIds', () => {
+    test('adds task ID when task completed with at least one commit', () => {
+      const next = updateCompletedLocallyTaskIds(new Set<string>(), 'task-1', true, 1);
+      expect(next).toEqual(new Set(['task-1']));
+    });
+
+    test('keeps task ID when task completed but no commit was produced', () => {
+      const next = updateCompletedLocallyTaskIds(
+        new Set<string>(['task-1', 'task-2']),
+        'task-1',
+        true,
+        0
+      );
+      expect(next).toEqual(new Set(['task-1', 'task-2']));
+    });
+
+    test('removes task ID when task did not complete regardless of commit count', () => {
+      const next = updateCompletedLocallyTaskIds(
+        new Set<string>(['task-1', 'task-2']),
+        'task-1',
+        false,
+        9
+      );
+      expect(next).toEqual(new Set(['task-2']));
+    });
+  });
+
+  describe('applyParallelCompletionState', () => {
+    test('marks session completed when executor status is completed', () => {
+      const state = {
+        status: 'running',
+        isPaused: true,
+        activeTaskIds: ['task-1'],
+        updatedAt: '2026-01-01T00:00:00.000Z',
+      } as any;
+
+      const next = applyParallelCompletionState(state, 'completed');
+
+      expect(next.status).toBe('completed');
+      expect(next.isPaused).toBe(false);
+      expect(next.activeTaskIds).toEqual(['task-1']);
+    });
+
+    test('marks session interrupted and clears active tasks when executor is not completed', () => {
+      const state = {
+        status: 'running',
+        isPaused: true,
+        activeTaskIds: ['task-1', 'task-2'],
+        updatedAt: '2026-01-01T00:00:00.000Z',
+      } as any;
+
+      const next = applyParallelCompletionState(state, 'interrupted');
+
+      expect(next.status).toBe('interrupted');
+      expect(next.isPaused).toBe(false);
+      expect(next.activeTaskIds).toEqual([]);
+      expect(next.updatedAt).not.toBe(state.updatedAt);
+    });
+  });
+
+  describe('isParallelExecutionComplete', () => {
+    test('returns true only when status is completed and counts are fully satisfied', () => {
+      expect(isParallelExecutionComplete('completed', 3, 3)).toBe(true);
+      expect(isParallelExecutionComplete('completed', 4, 3)).toBe(true);
+    });
+
+    test('returns false when status is interrupted even if counts match', () => {
+      expect(isParallelExecutionComplete('interrupted', 3, 3)).toBe(false);
+    });
+
+    test('returns false when completed status but task counts are short', () => {
+      expect(isParallelExecutionComplete('completed', 2, 3)).toBe(false);
+    });
+  });
+
+  describe('applyConflictResolvedTaskTracking', () => {
+    test('keeps completed-locally state when conflict was skipped (empty results)', () => {
+      const outcome = applyConflictResolvedTaskTracking(
+        new Set<string>(['task-1']),
+        new Set<string>(),
+        'task-1',
+        0
+      );
+
+      expect(outcome.completedLocallyTaskIds).toEqual(new Set(['task-1']));
+      expect(outcome.mergedTaskIds).toEqual(new Set());
+    });
+
+    test('moves task from completed-locally to merged when exactly one conflict is resolved', () => {
+      const outcome = applyConflictResolvedTaskTracking(
+        new Set<string>(['task-1', 'task-2']),
+        new Set<string>(['task-3']),
+        'task-1',
+        1
+      );
+
+      expect(outcome.completedLocallyTaskIds).toEqual(new Set(['task-2']));
+      expect(outcome.mergedTaskIds).toEqual(new Set(['task-3', 'task-1']));
+    });
+
+    test('moves task from completed-locally to merged when conflicts resolved', () => {
+      const outcome = applyConflictResolvedTaskTracking(
+        new Set<string>(['task-1', 'task-2']),
+        new Set<string>(['task-3']),
+        'task-1',
+        2
+      );
+
+      expect(outcome.completedLocallyTaskIds).toEqual(new Set(['task-2']));
+      expect(outcome.mergedTaskIds).toEqual(new Set(['task-3', 'task-1']));
     });
   });
 

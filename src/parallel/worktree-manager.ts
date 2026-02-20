@@ -108,7 +108,8 @@ export class WorktreeManager {
    * @throws If worktree creation fails or disk space is insufficient
    */
   async acquire(workerId: string, taskId: string): Promise<WorktreeInfo> {
-    if (this.worktrees.size >= this.config.maxWorktrees) {
+    const activeWorktreeCount = this.getActiveWorktreeCount();
+    if (activeWorktreeCount >= this.config.maxWorktrees) {
       throw new Error(
         `Maximum worktrees reached (${this.config.maxWorktrees}). ` +
           'Release existing worktrees before acquiring new ones.'
@@ -192,6 +193,19 @@ export class WorktreeManager {
    */
   getAllWorktrees(): WorktreeInfo[] {
     return [...this.worktrees.values()];
+  }
+
+  /**
+   * Count currently active (in-use) worktrees.
+   */
+  private getActiveWorktreeCount(): number {
+    let count = 0;
+    for (const info of this.worktrees.values()) {
+      if (info.active) {
+        count++;
+      }
+    }
+    return count;
   }
 
   /**
@@ -376,20 +390,29 @@ export class WorktreeManager {
 
   /**
    * Check if there is enough disk space to create a worktree.
-   * Uses Node.js fs.statfs() for cross-platform compatibility (macOS, Linux, Windows).
+   * Uses Node.js fs.statfs() first, then falls back to `df` when statfs is not
+   * returning a usable value (for APFS and other filesystem quirks).
    * @throws If available space is below the minimum threshold
    */
   private async checkDiskSpace(): Promise<void> {
-    try {
-      // Use fs.statfs for cross-platform disk space checking
-      const stats = await fs.promises.statfs(this.config.cwd);
-      // bavail = free blocks available to unprivileged user
-      // bsize = block size
-      const available = stats.bavail * stats.bsize;
+    const minimumRequired = this.config.minFreeDiskSpace;
+    const minMb = Math.round(minimumRequired / (1024 * 1024));
 
-      if (available < this.config.minFreeDiskSpace) {
+    try {
+      // Prefer statfs (fast and cross-platform), but fall back when it reports
+      // 0/invalid values on filesystems like APFS.
+      let available = await this.getAvailableDiskSpaceFromStatFs();
+      if (available === null || available <= 0) {
+        available = await this.getAvailableDiskSpaceFromDf();
+      }
+
+      if (available === null) {
+        return;
+      }
+
+      if (available < minimumRequired) {
         const availMB = Math.round(available / (1024 * 1024));
-        const reqMB = Math.round(this.config.minFreeDiskSpace / (1024 * 1024));
+        const reqMB = minMb;
         throw new Error(
           `Insufficient disk space for worktree: ${availMB}MB available, ${reqMB}MB required`
         );
@@ -402,9 +425,86 @@ export class WorktreeManager {
       ) {
         throw err;
       }
-      // fs.statfs may not be available on older Node versions or some systems
-      // In that case, continue without the check
+      // Disk checks are best-effort; if both methods fail unexpectedly,
+      // continue rather than blocking execution on unknown platforms.
     }
+  }
+
+  /**
+   * Read available bytes from fs.statfs.
+   * Returns null if unavailable or unreadable.
+   */
+  private async getAvailableDiskSpaceFromStatFs(): Promise<number | null> {
+    try {
+      const stats = await fs.promises.statfs(this.config.cwd);
+      const available = Number(stats.bavail) * Number(stats.bsize);
+      if (!Number.isFinite(available)) {
+        return null;
+      }
+      return available;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Read available bytes from `df -k <path>`.
+   * Returns null if parsing fails or output is unavailable.
+   */
+  private getAvailableDiskSpaceFromDf(): number | null {
+    try {
+      const output = execFileSync('df', ['-k', this.config.cwd], {
+        encoding: 'utf-8',
+      });
+      return this.parseDfAvailableBytes(output);
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Parse `df` output and return available bytes.
+   */
+  private parseDfAvailableBytes(output: string): number | null {
+    const lines = output.trim().split('\n').filter((line) => line.trim().length > 0);
+    if (lines.length < 2) {
+      return null;
+    }
+
+    const header = lines[0]?.toLowerCase();
+    if (!header) {
+      return null;
+    }
+
+    const normalizedHeader = header
+      .trim()
+      .split(/\s+/)
+      .map((value) => value.replace('%', '').trim());
+
+    const availIndex = normalizedHeader.findIndex((headerValue) =>
+      headerValue === 'avail' || headerValue === 'available'
+    );
+    if (availIndex < 0) {
+      return null;
+    }
+
+    // Use the last data row to avoid issues with multiline headers.
+    const dataLine = lines.at(-1);
+    if (!dataLine) {
+      return null;
+    }
+
+    const values = dataLine.trim().split(/\s+/);
+    if (values.length <= availIndex) {
+      return null;
+    }
+
+    const availableKb = Number.parseInt(values[availIndex] ?? '', 10);
+    if (Number.isNaN(availableKb) || !Number.isFinite(availableKb) || availableKb < 0) {
+      return null;
+    }
+
+    return availableKb * 1024;
   }
 
   /**

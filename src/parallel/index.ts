@@ -315,7 +315,12 @@ export class ParallelExecutor {
         await this.executeGroup(group, i);
       }
 
-      this.status = this.shouldStop ? 'interrupted' : 'completed';
+      const allActionableTasksCompleted =
+        this.totalTasksCompleted >= this.taskGraph.actionableTaskCount &&
+        this.totalTasksFailed === 0;
+      this.status = this.shouldStop || !allActionableTasksCompleted
+        ? 'interrupted'
+        : 'completed';
 
       this.emitParallel({
         type: 'parallel:completed',
@@ -463,12 +468,15 @@ export class ParallelExecutor {
       }> = [];
 
       for (const result of results) {
-        if (this.shouldStop) break;
+        if (this.shouldStop) {
+          // Stop was requested mid-batch: do not merge partial work, reopen task instead.
+          groupTasksFailed++;
+          this.totalTasksFailed++;
+          await this.resetTaskToOpen(result.task.id);
+          continue;
+        }
 
         if (result.success && result.taskCompleted) {
-          groupTasksCompleted++;
-          this.totalTasksCompleted++;
-
           // Save tracker state before merge to prevent worktree's stale copy from overwriting
           const savedState = await this.saveTrackerState();
 
@@ -491,6 +499,8 @@ export class ParallelExecutor {
             }
             // Merge worker's progress.md into main so subsequent workers see learnings
             await this.mergeProgressFile(result);
+            groupTasksCompleted++;
+            this.totalTasksCompleted++;
             groupMergesCompleted++;
             this.totalMergesCompleted++;
           } else if (mergeResult?.hadConflicts) {
@@ -503,24 +513,45 @@ export class ParallelExecutor {
               pendingConflicts.push({ operation, workerResult: result });
             } else {
               // AI conflict resolution disabled - mark as failed
+              groupTasksFailed++;
+              this.totalTasksFailed++;
               groupMergesFailed++;
               await this.handleMergeFailure(result);
             }
           } else {
             // Merge failed (non-conflict) - don't mark task as complete
+            groupTasksFailed++;
+            this.totalTasksFailed++;
             groupMergesFailed++;
             await this.handleMergeFailure(result);
           }
         } else {
           groupTasksFailed++;
           this.totalTasksFailed++;
+          await this.resetTaskToOpen(result.task.id);
         }
       }
 
       // Phase 2: Resolve all collected conflicts after all merges attempted
-      if (pendingConflicts.length > 0 && !this.shouldStop) {
+      if (pendingConflicts.length > 0) {
+        if (this.shouldStop) {
+          for (const { workerResult } of pendingConflicts) {
+            groupTasksFailed++;
+            this.totalTasksFailed++;
+            groupMergesFailed++;
+            await this.resetTaskToOpen(workerResult.task.id);
+          }
+          continue;
+        }
+
         for (const { operation, workerResult } of pendingConflicts) {
-          if (this.shouldStop) break;
+          if (this.shouldStop) {
+            groupTasksFailed++;
+            this.totalTasksFailed++;
+            groupMergesFailed++;
+            await this.resetTaskToOpen(workerResult.task.id);
+            continue;
+          }
 
           // Save tracker state before conflict resolution
           const savedState = await this.saveTrackerState();
@@ -554,12 +585,16 @@ export class ParallelExecutor {
             // Merge worker's progress.md into main
             await this.mergeProgressFile(workerResult);
             this.totalConflictsResolved += resolutions.length;
+            groupTasksCompleted++;
+            this.totalTasksCompleted++;
             groupMergesCompleted++;
             this.totalMergesCompleted++;
           } else {
             // Conflict resolution failed - track for retry/skip
             this.pendingConflictOperation = operation;
             this.pendingConflictWorkerResult = workerResult;
+            groupTasksFailed++;
+            this.totalTasksFailed++;
             groupMergesFailed++;
             await this.handleMergeFailure(workerResult);
           }
@@ -675,7 +710,7 @@ export class ParallelExecutor {
   }
 
   /**
-   * Handle a merge failure by re-queuing the task if allowed.
+   * Handle a merge failure by tracking retries and resetting the task to open.
    */
   private async handleMergeFailure(result: WorkerResult): Promise<void> {
     const taskId = result.task.id;
@@ -683,12 +718,20 @@ export class ParallelExecutor {
 
     if (currentCount < this.config.maxRequeueCount) {
       this.requeueCounts.set(taskId, currentCount + 1);
-      // Reset task to open so it can be picked up again
-      try {
-        await this.tracker.updateTaskStatus(taskId, 'open');
-      } catch {
-        // Best effort
-      }
+    }
+
+    await this.resetTaskToOpen(taskId);
+  }
+
+  /**
+   * Best-effort reset of a task status to open.
+   * Prevents tasks from remaining stuck in in_progress after cancellation/failure.
+   */
+  private async resetTaskToOpen(taskId: string): Promise<void> {
+    try {
+      await this.tracker.updateTaskStatus(taskId, 'open');
+    } catch {
+      // Best effort
     }
   }
 

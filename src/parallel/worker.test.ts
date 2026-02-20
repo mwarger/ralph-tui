@@ -33,6 +33,33 @@ function workerConfig(id: string, task: TrackerTask): WorkerConfig {
   };
 }
 
+/** Attach a lightweight fake engine without using initialize(). */
+function setFakeEngine(
+  worker: Worker,
+  overrides: {
+    start?: () => Promise<void>;
+    stop?: () => Promise<void>;
+    getState?: () => { tasksCompleted: number; currentIteration: number };
+    pause?: () => void;
+    resume?: () => void;
+  } = {}
+): void {
+  const fakeEngine = {
+    start: overrides.start ?? (async () => {}),
+    stop: overrides.stop ?? (async () => {}),
+    getState: overrides.getState ?? (() => ({ tasksCompleted: 0, currentIteration: 0 })),
+    pause: overrides.pause ?? (() => {}),
+    resume: overrides.resume ?? (() => {}),
+  };
+
+  (worker as any).engine = fakeEngine;
+}
+
+/** Emit an engine event into the worker without depending on ExecutionEngine internals. */
+function emitEngineEvent(worker: Worker, event: any): void {
+  (worker as any).handleEngineEvent(event);
+}
+
 describe('Worker', () => {
   describe('constructor', () => {
     test('sets id from config', () => {
@@ -100,6 +127,105 @@ describe('Worker', () => {
 
       // start() should throw because no engine was initialized
       await expect(worker.start()).rejects.toThrow('not initialized');
+    });
+  });
+
+  describe('start with fake engine', () => {
+    test('includes accumulated commit count in successful result', async () => {
+      const worker = new Worker(workerConfig('w1', mockTask('T1')), 10);
+
+      setFakeEngine(worker, {
+        start: async () => {
+          emitEngineEvent(worker, {
+            type: 'task:auto-committed',
+            timestamp: new Date().toISOString(),
+            commitSha: 'abc123',
+          });
+          emitEngineEvent(worker, {
+            type: 'task:auto-committed',
+            timestamp: new Date().toISOString(),
+            commitSha: 'def456',
+          });
+        },
+        getState: () => ({ tasksCompleted: 1, currentIteration: 2 }),
+      });
+
+      const result = await worker.start();
+
+      expect(result.success).toBe(true);
+      expect(result.taskCompleted).toBe(true);
+      expect(result.commitCount).toBe(2);
+      expect(worker.getDisplayState().commitSha).toBe('def456');
+    });
+
+    test('resets commit tracking between runs', async () => {
+      const worker = new Worker(workerConfig('w1', mockTask('T1')), 10);
+      let runCount = 0;
+
+      setFakeEngine(worker, {
+        start: async () => {
+          runCount++;
+          if (runCount === 1) {
+            emitEngineEvent(worker, {
+              type: 'task:auto-committed',
+              timestamp: new Date().toISOString(),
+              commitSha: 'firstsha',
+            });
+          }
+        },
+        getState: () => ({ tasksCompleted: 1, currentIteration: 1 }),
+      });
+
+      const first = await worker.start();
+      expect(first.commitCount).toBe(1);
+      expect(worker.getDisplayState().commitSha).toBe('firstsha');
+
+      const second = await worker.start();
+      expect(second.commitCount).toBe(0);
+      expect(worker.getDisplayState().commitSha).toBeUndefined();
+    });
+
+    test('keeps commit count when worker is cancelled during start', async () => {
+      const worker = new Worker(workerConfig('w1', mockTask('T1')), 10);
+
+      setFakeEngine(worker, {
+        start: async () => {
+          emitEngineEvent(worker, {
+            type: 'task:auto-committed',
+            timestamp: new Date().toISOString(),
+            commitSha: 'cancelsha',
+          });
+          await worker.stop();
+        },
+        getState: () => ({ tasksCompleted: 1, currentIteration: 1 }),
+      });
+
+      const result = await worker.start();
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('Worker was cancelled');
+      expect(result.commitCount).toBe(1);
+    });
+
+    test('keeps commit count when engine start throws', async () => {
+      const worker = new Worker(workerConfig('w1', mockTask('T1')), 10);
+
+      setFakeEngine(worker, {
+        start: async () => {
+          emitEngineEvent(worker, {
+            type: 'task:auto-committed',
+            timestamp: new Date().toISOString(),
+            commitSha: 'errorsha',
+          });
+          throw new Error('boom');
+        },
+      });
+
+      const result = await worker.start();
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('boom');
+      expect(result.commitCount).toBe(1);
     });
   });
 

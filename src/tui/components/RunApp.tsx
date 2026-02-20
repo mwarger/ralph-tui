@@ -48,7 +48,6 @@ import type {
 } from '../../engine/index.js';
 import type { TrackerTask } from '../../plugins/trackers/types.js';
 import type { StoredConfig, SubagentDetailLevel, SandboxConfig, SandboxMode } from '../../config/types.js';
-import type { AgentPluginMeta } from '../../plugins/agents/types.js';
 import type { TrackerPluginMeta } from '../../plugins/trackers/types.js';
 import { getIterationLogsByTask } from '../../logs/index.js';
 import type { SubagentTraceStats, SubagentHierarchyNode } from '../../logs/types.js';
@@ -103,8 +102,8 @@ export interface RunAppProps {
   onStart?: () => Promise<void>;
   /** Current stored configuration (for settings view) */
   storedConfig?: StoredConfig;
-  /** Available agent plugins (for settings view) */
-  availableAgents?: AgentPluginMeta[];
+  /** Available agent names (for settings view) */
+  availableAgents?: string[];
   /** Available tracker plugins (for settings view) */
   availableTrackers?: TrackerPluginMeta[];
   /** Callback when settings should be saved */
@@ -192,6 +191,8 @@ export interface RunAppProps {
   activeWorkerCount?: number;
   /** Total number of workers */
   totalWorkerCount?: number;
+  /** Failure message for parallel execution */
+  parallelFailureMessage?: string;
   /** Callback to pause parallel execution */
   onParallelPause?: () => void;
   /** Callback to resume parallel execution */
@@ -459,6 +460,7 @@ export function RunApp({
   parallelCompletedLocallyTaskIds,
   parallelAutoCommitSkippedTaskIds: _parallelAutoCommitSkippedTaskIds, // Reserved for future status bar warning
   parallelMergedTaskIds,
+  parallelFailureMessage,
   activeWorkerCount,
   totalWorkerCount,
   onParallelPause,
@@ -472,6 +474,11 @@ export function RunApp({
   const renderer = useRenderer();
   // Copy feedback message state (auto-dismissed after 2s)
   const [copyFeedback, setCopyFeedback] = useState<string | null>(null);
+  useEffect(() => {
+    if (isParallelMode && parallelFailureMessage) {
+      setStatus('error');
+    }
+  }, [isParallelMode, parallelFailureMessage]);
   // Info feedback message state (auto-dismissed after 4s, for hints/tips)
   const [infoFeedback, setInfoFeedback] = useState<string | null>(null);
   const [tasks, setTasks] = useState<TaskItem[]>(() => {
@@ -2878,6 +2885,18 @@ export function RunApp({
           />
         );
       })()}
+
+      {/* Parallel failure banner */}
+      {isParallelMode && parallelFailureMessage && (
+        <Toast
+          visible={true}
+          message={parallelFailureMessage}
+          icon={'⚠'}
+          variant="error"
+          bottom={6}
+          right={2}
+        />
+      )}
 
       {/* Interrupt Confirmation Dialog */}
       <ConfirmationDialog

@@ -11,11 +11,13 @@ import {
   clearConflictState,
   findResolutionByPath,
   areAllConflictsResolved,
+  applyParallelFailureState,
   type TaskRangeFilter,
   type ParallelConflictState,
 } from './run.js';
 import type { TrackerTask } from '../plugins/trackers/types.js';
 import type { FileConflict, ConflictResolutionResult } from '../parallel/types.js';
+import type { PersistedSessionState } from '../session/persistence.js';
 
 /**
  * Helper to create mock tasks for testing.
@@ -642,6 +644,67 @@ describe('conflict resolution helpers', () => {
 
       handleUpKey(); // Should not go below 0
       expect(selectedIndex).toBe(0);
+    });
+  });
+
+  describe('parallel failure handling', () => {
+    const basePersistedState: PersistedSessionState = {
+      version: 1,
+      sessionId: 'parallel-session-failure',
+      status: 'running',
+      startedAt: '2025-01-01T00:00:00.000Z',
+      updatedAt: '2025-01-01T00:00:00.000Z',
+      currentIteration: 0,
+      maxIterations: 0,
+      tasksCompleted: 0,
+      isPaused: false,
+      agentPlugin: 'agent',
+      trackerState: {
+        plugin: 'tracker',
+        totalTasks: 0,
+        tasks: [],
+      },
+      iterations: [],
+      skippedTaskIds: [],
+      cwd: '/tmp',
+      activeTaskIds: [],
+    };
+
+    test('sets and persists failed state on startup fallback with default message', () => {
+      let persisted: PersistedSessionState | undefined;
+      const parallelState = { failureMessage: null as string | null };
+      const recordPersistedState = (state: PersistedSessionState) => {
+        persisted = state;
+      };
+      const fallbackState = applyParallelFailureState(
+        basePersistedState,
+        parallelState,
+        'Parallel execution failed before startup',
+        recordPersistedState
+      );
+
+      expect(parallelState.failureMessage).toBe('Parallel execution failed before startup');
+      expect(fallbackState.status).toBe('failed');
+      expect(persisted?.status).toBe('failed');
+      expect(persisted).toEqual(fallbackState);
+    });
+
+    test('keeps existing startup error message and still persists failed state', () => {
+      let persisted: PersistedSessionState | undefined;
+      const parallelState = { failureMessage: 'Existing startup failure' as string | null };
+      const recordPersistedState = (state: PersistedSessionState) => {
+        persisted = state;
+      };
+      const fallbackState = applyParallelFailureState(
+        basePersistedState,
+        parallelState,
+        'Parallel execution failed before startup',
+        recordPersistedState
+      );
+
+      expect(parallelState.failureMessage).toBe('Existing startup failure');
+      expect(fallbackState.status).toBe('failed');
+      expect(persisted?.status).toBe('failed');
     });
   });
 });

@@ -219,6 +219,63 @@ describe('loadStoredConfig', () => {
     expect(config.notifications?.enabled).toBe(true);
     expect(config.notifications?.sound).toBe('ralph');
   });
+
+  test('promotes a misplaced defaultAgent from an agent options table', async () => {
+    const projectConfigDir = join(tempDir, '.ralph-tui');
+    await mkdir(projectConfigDir, { recursive: true });
+    const projectConfigPath = join(projectConfigDir, 'config.toml');
+    await writeFile(
+      projectConfigPath,
+      `
+configVersion = "2.1"
+maxIterations = 0
+tracker = "beads-rust"
+
+[[agents]]
+name = "cc-claude-4.6"
+plugin = "claude"
+
+    [agents.options]
+    model = "claude-opus-4-6"
+
+[[agents]]
+name = "oc-claude-4.6"
+plugin = "opencode"
+
+    [agents.options]
+    model = "github-copilot/claude-opus-4.6"
+
+defaultAgent = "cc-claude-4.6"
+`,
+      'utf-8',
+    );
+
+    const config = await loadStoredConfig(tempDir, globalConfigPath);
+
+    expect(config.defaultAgent).toBe('cc-claude-4.6');
+    expect(config.agents?.[1]?.options).toEqual({
+      model: 'github-copilot/claude-opus-4.6',
+    });
+    expect(config.agents?.[1]?.options).not.toHaveProperty('defaultAgent');
+  });
+
+  test('merges parallel config', async () => {
+    await writeTomlConfig(globalConfigPath, {
+      parallel: { mode: 'auto', maxWorkers: 2, worktreeDir: '.global/worktrees' },
+    });
+
+    const projectConfigDir = join(tempDir, '.ralph-tui');
+    await mkdir(projectConfigDir, { recursive: true });
+    await writeTomlConfig(join(projectConfigDir, 'config.toml'), {
+      parallel: { maxWorkers: 5, directMerge: true },
+    });
+
+    const config = await loadStoredConfig(tempDir, globalConfigPath);
+    expect(config.parallel?.mode).toBe('auto');
+    expect(config.parallel?.worktreeDir).toBe('.global/worktrees');
+    expect(config.parallel?.maxWorkers).toBe(5);
+    expect(config.parallel?.directMerge).toBe(true);
+  });
 });
 
 describe('loadStoredConfigWithSource', () => {
@@ -383,6 +440,19 @@ describe('checkSetupStatus', () => {
     expect(status.configExists).toBe(false);
     expect(status.agentConfigured).toBe(false);
     expect(status.message).toContain('No configuration found');
+  });
+
+  test('treats configured agents as ready even without defaultAgent', async () => {
+    const projectConfigDir = join(tempDir, '.ralph-tui');
+    await mkdir(projectConfigDir, { recursive: true });
+    await writeTomlConfig(join(projectConfigDir, 'config.toml'), {
+      agents: [{ name: 'custom-agent', plugin: 'claude', options: {} }],
+    });
+
+    const status = await checkSetupStatus(tempDir);
+
+    expect(status.ready).toBe(true);
+    expect(status.agentConfigured).toBe(true);
   });
 });
 

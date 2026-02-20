@@ -213,6 +213,50 @@ describe('BeadsRustTrackerPlugin', () => {
       expect(tasks[0]?.id).toBe('epic.1');
     });
 
+    test('uses setEpicId for parent filtering when filter is not provided', async () => {
+      mockSpawnResponses = [
+        { exitCode: 0, stdout: 'br version 0.4.1\n' },
+        {
+          exitCode: 0,
+          stdout: JSON.stringify([
+            { id: 'epic-parent-child', title: 'Tracked child', status: 'open', priority: 1 },
+            { id: 'other', title: 'Unrelated task', status: 'open', priority: 1 },
+          ]),
+        },
+        {
+          exitCode: 0,
+          stdout: JSON.stringify([
+            {
+              issue_id: 'epic-parent-child',
+              depends_on_id: 'epic-parent',
+              type: 'parent-child',
+              title: 'Tracked child',
+              status: 'open',
+              priority: 1,
+            },
+          ]),
+        },
+      ];
+
+      const plugin = new BeadsRustTrackerPlugin();
+      await plugin.initialize({ workingDir: '/test' });
+      plugin.setEpicId('epic-parent');
+      mockSpawnArgs = [];
+
+      const tasks = await plugin.getTasks();
+
+      expect(mockSpawnArgs[1]?.args).toEqual([
+        'dep',
+        'list',
+        'epic-parent',
+        '--direction',
+        'up',
+        '--json',
+      ]);
+      expect(tasks.length).toBe(1);
+      expect(tasks[0]?.id).toBe('epic-parent-child');
+    });
+
     test('returns empty array when br dep list fails for parent filtering', async () => {
       mockSpawnResponses = [
         { exitCode: 0, stdout: 'br version 0.4.1\n' },
@@ -559,13 +603,13 @@ describe('BeadsRustTrackerPlugin', () => {
                   id: 'dep1',
                   title: 'Dep 1',
                   status: 'open',
-                  type: 'blocks',
+                  dependency_type: 'blocks',
                 },
                 {
                   id: 'parent1',
                   title: 'Parent 1',
                   status: 'open',
-                  type: 'parent-child',
+                  dependency_type: 'parent-child',
                 },
               ],
               dependents: [
@@ -573,7 +617,7 @@ describe('BeadsRustTrackerPlugin', () => {
                   id: 'child1',
                   title: 'Child 1',
                   status: 'open',
-                  type: 'blocks',
+                  dependency_type: 'blocks',
                 },
               ],
             },
@@ -594,6 +638,24 @@ describe('BeadsRustTrackerPlugin', () => {
       mockSpawnResponses = [
         { exitCode: 0, stdout: 'br version 0.4.1\n' },
         { exitCode: 0, stdout: JSON.stringify([]) },
+      ];
+
+      const plugin = new BeadsRustTrackerPlugin();
+      await plugin.initialize({ workingDir: '/test' });
+
+      const task = await plugin.getTask('t1');
+      expect(task).toBeUndefined();
+    });
+
+    test('returns undefined when br show returns a tombstoned task', async () => {
+      mockSpawnResponses = [
+        { exitCode: 0, stdout: 'br version 0.4.1\n' },
+        {
+          exitCode: 0,
+          stdout: JSON.stringify([
+            { id: 't1', title: 'Deleted task', status: 'tombstone', priority: 2 },
+          ]),
+        },
       ];
 
       const plugin = new BeadsRustTrackerPlugin();
@@ -950,9 +1012,9 @@ describe('BeadsRustTrackerPlugin', () => {
               priority: 0,
               external_ref: 'prd:./tasks/prd.md',
               dependents: [
-                { id: 'epic1.1', title: 'A', status: 'open', type: 'parent-child' },
-                { id: 'epic1.2', title: 'B', status: 'closed', type: 'parent-child' },
-                { id: 'epic1.3', title: 'C', status: 'cancelled', type: 'parent-child' },
+                { id: 'epic1.1', title: 'A', status: 'open', dependency_type: 'parent-child' },
+                { id: 'epic1.2', title: 'B', status: 'closed', dependency_type: 'parent-child' },
+                { id: 'epic1.3', title: 'C', status: 'cancelled', dependency_type: 'parent-child' },
               ],
             },
           ]),
@@ -1033,6 +1095,137 @@ describe('BeadsRustTrackerPlugin', () => {
       expect(result).toBeNull();
       expect(mockReadFilePaths).toEqual(['/test/tasks/prd.md']);
       expect(mockSpawnArgs.map((c) => c.args)).toEqual([['show', 'epic1', '--json']]);
+    });
+  });
+
+  describe('tombstone filtering', () => {
+    test('getTasks filters out tombstoned issues', async () => {
+      mockSpawnResponses = [
+        { exitCode: 0, stdout: 'br version 0.4.1\n' },
+        {
+          exitCode: 0,
+          stdout: JSON.stringify([
+            { id: 't1', title: 'Open task', status: 'open', priority: 2 },
+            { id: 't2', title: 'Deleted task', status: 'tombstone', priority: 2 },
+            { id: 't3', title: 'Closed task', status: 'closed', priority: 2 },
+          ]),
+        },
+      ];
+
+      const plugin = new BeadsRustTrackerPlugin();
+      await plugin.initialize({ workingDir: '/test' });
+      mockSpawnArgs = [];
+
+      const tasks = await plugin.getTasks();
+
+      expect(tasks.length).toBe(2);
+      expect(tasks.map((t) => t.id)).toEqual(['t1', 't3']);
+    });
+
+    test('getEpics filters out tombstoned epics', async () => {
+      mockSpawnResponses = [
+        { exitCode: 0, stdout: 'br version 0.4.1\n' },
+        {
+          exitCode: 0,
+          stdout: JSON.stringify([
+            { id: 'epic1', title: 'Active epic', status: 'open', priority: 1, issue_type: 'epic' },
+            { id: 'epic2', title: 'Deleted epic', status: 'tombstone', priority: 1, issue_type: 'epic' },
+          ]),
+        },
+      ];
+
+      const plugin = new BeadsRustTrackerPlugin();
+      await plugin.initialize({ workingDir: '/test' });
+
+      const epics = await plugin.getEpics();
+
+      expect(epics.length).toBe(1);
+      expect(epics[0]?.id).toBe('epic1');
+    });
+
+    test('getNextTask filters out tombstoned issues', async () => {
+      mockSpawnResponses = [
+        { exitCode: 0, stdout: 'br version 0.4.1\n' },
+        {
+          exitCode: 0,
+          stdout: JSON.stringify([
+            { id: 't1', title: 'Deleted', status: 'tombstone', priority: 2 },
+            { id: 't2', title: 'Ready', status: 'open', priority: 2 },
+          ]),
+        },
+      ];
+
+      const plugin = new BeadsRustTrackerPlugin();
+      await plugin.initialize({ workingDir: '/test' });
+      mockSpawnArgs = [];
+
+      const task = await plugin.getNextTask();
+
+      expect(task?.id).toBe('t2');
+    });
+
+    test('getNextTask returns undefined when all tasks are tombstoned', async () => {
+      mockSpawnResponses = [
+        { exitCode: 0, stdout: 'br version 0.4.1\n' },
+        {
+          exitCode: 0,
+          stdout: JSON.stringify([
+            { id: 't1', title: 'Deleted 1', status: 'tombstone', priority: 2 },
+            { id: 't2', title: 'Deleted 2', status: 'tombstone', priority: 2 },
+          ]),
+        },
+      ];
+
+      const plugin = new BeadsRustTrackerPlugin();
+      await plugin.initialize({ workingDir: '/test' });
+      mockSpawnArgs = [];
+
+      const task = await plugin.getNextTask();
+
+      expect(task).toBeUndefined();
+    });
+
+    test('getPrdContext excludes tombstoned dependents from child counts', async () => {
+      mockReadFileContent = '# PRD\n\nHello\n';
+      mockSpawnResponses = [
+        { exitCode: 0, stdout: 'br version 0.4.1\n' },
+        {
+          exitCode: 0,
+          stdout: JSON.stringify([
+            {
+              id: 'epic-tombstone-parents',
+              title: 'Epic with deleted child',
+              description: 'Epic desc',
+              status: 'open',
+              priority: 0,
+              external_ref: 'prd:./tasks/prd.md',
+              dependents: [
+                { id: 'child-live-closed', title: 'Closed child', status: 'closed', dependency_type: 'parent-child' },
+                { id: 'child-live-cancelled', title: 'Cancelled child', status: 'cancelled', dependency_type: 'parent-child' },
+                { id: 'child-live-open', title: 'Open child', status: 'open', dependency_type: 'parent-child' },
+                { id: 'child-deleted', title: 'Deleted child', status: 'tombstone', dependency_type: 'parent-child' },
+              ],
+            },
+          ]),
+        },
+      ];
+
+      const plugin = new BeadsRustTrackerPlugin();
+      await plugin.initialize({ workingDir: '/test', epicId: 'epic-tombstone-parents' });
+      mockSpawnArgs = [];
+      const result = await plugin.getPrdContext();
+
+      expect(result).toEqual({
+        name: 'Epic with deleted child',
+        description: 'Epic desc',
+        content: '# PRD\n\nHello\n',
+        completedCount: 2,
+        totalCount: 3,
+      });
+      expect(mockReadFilePaths).toEqual(['/test/tasks/prd.md']);
+      expect(mockSpawnArgs.map((c) => c.args)).toEqual([
+        ['show', 'epic-tombstone-parents', '--json'],
+      ]);
     });
   });
 });
