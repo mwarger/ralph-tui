@@ -60,7 +60,7 @@ import {
   withContextWindow,
   type TokenUsageSummary,
 } from '../../plugins/agents/usage.js';
-import { getModelsForProvider } from '../../models-dev/index.js';
+import { getModelsForProvider, getProviders } from '../../models-dev/index.js';
 import type {
   WorkerDisplayState,
   MergeOperation,
@@ -422,6 +422,29 @@ function parseProviderModel(model?: string): { providerId: string; modelId: stri
     return null;
   }
   return { providerId, modelId };
+}
+
+function getFallbackContextWindow(model?: string, agentHint?: string): number | undefined {
+  const normalizedModel = model?.trim().toLowerCase() ?? '';
+  const normalizedAgent = agentHint?.trim().toLowerCase();
+  const modelPart = normalizedModel.includes('/')
+    ? normalizedModel.split('/').slice(1).join('/')
+    : normalizedModel;
+
+  // Claude CLI often uses shorthand model names ("sonnet", "opus", "haiku")
+  // that cannot be resolved via models.dev without provider/model format.
+  if (
+    normalizedAgent === 'claude' ||
+    modelPart === 'sonnet' ||
+    modelPart === 'opus' ||
+    modelPart === 'haiku' ||
+    modelPart.startsWith('claude-') ||
+    modelPart.includes('claude')
+  ) {
+    return 200_000;
+  }
+
+  return undefined;
 }
 
 function normalizeUsage(usage: TokenUsageSummary, contextWindow?: number): TokenUsageSummary {
@@ -970,7 +993,8 @@ export function RunApp({
 
   // Resolve model context windows for live local/remote usage indicators.
   const modelContextCacheRef = useRef<Map<string, number | null>>(new Map());
-  const resolveModelContextWindow = useCallback(async (model?: string): Promise<number | undefined> => {
+  const resolveModelContextWindow = useCallback(
+    async (model?: string, agentHint?: string): Promise<number | undefined> => {
     if (!model) {
       return undefined;
     }
@@ -980,35 +1004,57 @@ export function RunApp({
       return undefined;
     }
 
-    if (modelContextCacheRef.current.has(key)) {
-      const cached = modelContextCacheRef.current.get(key);
+    const cacheKey = `${agentHint ?? ''}::${key}`;
+    if (modelContextCacheRef.current.has(cacheKey)) {
+      const cached = modelContextCacheRef.current.get(cacheKey);
       return cached === null ? undefined : cached;
     }
 
     const parsed = parseProviderModel(key);
-    if (!parsed) {
-      modelContextCacheRef.current.set(key, null);
-      return undefined;
-    }
-
     try {
-      const models = await getModelsForProvider(parsed.providerId);
-      const match = models.find((m) => m.id === parsed.modelId);
-      if (match?.contextLimit && Number.isFinite(match.contextLimit)) {
-        modelContextCacheRef.current.set(key, match.contextLimit);
-        return match.contextLimit;
+      if (parsed) {
+        const models = await getModelsForProvider(parsed.providerId);
+        const match = models.find((m) => m.id === parsed.modelId);
+        if (match?.contextLimit && Number.isFinite(match.contextLimit)) {
+          modelContextCacheRef.current.set(cacheKey, match.contextLimit);
+          return match.contextLimit;
+        }
+      } else {
+        // Fallback for model strings without provider prefix (e.g., "gpt-4o", "sonnet").
+        const providers = await getProviders();
+        for (const provider of providers) {
+          const models = await getModelsForProvider(provider.id);
+          const match = models.find(
+            (m) =>
+              m.id === key ||
+              m.name.toLowerCase() === key.toLowerCase()
+          );
+          if (match?.contextLimit && Number.isFinite(match.contextLimit)) {
+            modelContextCacheRef.current.set(cacheKey, match.contextLimit);
+            return match.contextLimit;
+          }
+        }
       }
     } catch {
       // Ignore lookup failures and fall back to unavailable context window.
     }
 
-    modelContextCacheRef.current.set(key, null);
+    const fallback = getFallbackContextWindow(key, agentHint);
+    if (fallback && Number.isFinite(fallback)) {
+      modelContextCacheRef.current.set(cacheKey, fallback);
+      return fallback;
+    }
+
+    modelContextCacheRef.current.set(cacheKey, null);
     return undefined;
   }, []);
 
   useEffect(() => {
     let cancelled = false;
-    void resolveModelContextWindow(currentModel).then((contextWindow) => {
+    void resolveModelContextWindow(
+      currentModel,
+      activeAgentState?.plugin ?? resolvedAgentName
+    ).then((contextWindow) => {
       if (!cancelled) {
         localContextWindowRef.current = contextWindow;
         setLocalContextWindow(contextWindow);
@@ -1017,11 +1063,14 @@ export function RunApp({
     return () => {
       cancelled = true;
     };
-  }, [currentModel, resolveModelContextWindow]);
+  }, [currentModel, activeAgentState?.plugin, resolvedAgentName, resolveModelContextWindow]);
 
   useEffect(() => {
     let cancelled = false;
-    void resolveModelContextWindow(remoteModel).then((contextWindow) => {
+    void resolveModelContextWindow(
+      remoteModel,
+      remoteActiveAgent?.plugin ?? remoteAgentName
+    ).then((contextWindow) => {
       if (!cancelled) {
         remoteContextWindowRef.current = contextWindow;
         setRemoteContextWindow(contextWindow);
@@ -1030,7 +1079,7 @@ export function RunApp({
     return () => {
       cancelled = true;
     };
-  }, [remoteModel, resolveModelContextWindow]);
+  }, [remoteModel, remoteActiveAgent?.plugin, remoteAgentName, resolveModelContextWindow]);
 
   useEffect(() => {
     if (localContextWindow === undefined) {
@@ -1352,7 +1401,10 @@ export function RunApp({
       if (cancelled) return;
 
       if (result && result.success && result.output !== undefined) {
-        const contextWindow = await resolveModelContextWindow(remoteModel);
+        const contextWindow = await resolveModelContextWindow(
+          remoteModel,
+          remoteActiveAgent?.plugin ?? remoteAgentName
+        );
         if (cancelled) return;
         const fallbackUsage = summarizeTokenUsageFromOutput(result.output ?? '');
         const usage = result.usage
@@ -1398,6 +1450,8 @@ export function RunApp({
     remoteIterationCache,
     resolveModelContextWindow,
     remoteModel,
+    remoteActiveAgent?.plugin,
+    remoteAgentName,
   ]);
 
   // Update output parser when agent changes (parser was created before config was loaded)
@@ -2895,7 +2949,10 @@ export function RunApp({
               durationMs: mostRecent.metadata.durationMs,
               isRunning: false,
             };
-            const contextWindow = await resolveModelContextWindow(mostRecent.metadata.model);
+            const contextWindow = await resolveModelContextWindow(
+              mostRecent.metadata.model,
+              mostRecent.metadata.agentPlugin
+            );
             const fallbackUsage = summarizeTokenUsageFromOutput(mostRecent.stdout);
             const usage = mostRecent.metadata.usage
               ? normalizeUsage(mostRecent.metadata.usage, contextWindow)

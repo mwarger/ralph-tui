@@ -657,7 +657,7 @@ function UsageSummary({
               {remainingPercent.toFixed(1)}% remaining
             </text>
           ) : (
-            <text fg={colors.fg.secondary}>remaining unknown</text>
+            <text fg={colors.fg.secondary}>window size unknown</text>
           )}
           {remainingTokens !== undefined && contextWindow !== undefined && (
             <text fg={colors.fg.secondary}>
