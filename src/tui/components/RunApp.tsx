@@ -886,6 +886,21 @@ export function RunApp({
             console.error('Failed to refresh remote state:', err);
           });
           break;
+        case 'agent:usage':
+          {
+            const taskId = event.taskId ?? remoteCurrentTaskIdRef.current;
+            if (taskId) {
+              setRemoteTaskUsageMap((prev) => {
+                const next = new Map(prev);
+                next.set(
+                  taskId,
+                  normalizeUsage(event.usage, remoteContextWindowRef.current)
+                );
+                return next;
+              });
+            }
+          }
+          break;
         case 'iteration:completed':
           {
             const usage = event.result.usage;
@@ -1574,6 +1589,19 @@ export function RunApp({
           // This decouples data collection from display preferences - the subagentDetailLevel
           // only affects how much detail to show inline, not whether to track subagents.
           setSubagentTree(engine!.getSubagentTree());
+          break;
+
+        case 'agent:usage':
+          {
+            const taskId = event.taskId ?? currentTaskIdRef.current;
+            if (taskId) {
+              setTaskUsageMap((prev) => {
+                const next = new Map(prev);
+                next.set(taskId, normalizeUsage(event.usage, localContextWindowRef.current));
+                return next;
+              });
+            }
+          }
           break;
 
         case 'agent:switched':

@@ -48,7 +48,11 @@ import {
   isOpenCodeTaskTool,
   openCodeTaskToClaudeMessages,
 } from '../plugins/agents/opencode/outputParser.js';
-import { summarizeTokenUsageFromOutput } from '../plugins/agents/usage.js';
+import {
+  extractTokenUsageFromJsonObject,
+  summarizeTokenUsageFromOutput,
+  TokenUsageAccumulator,
+} from '../plugins/agents/usage.js';
 import { updateSessionIteration, updateSessionStatus, updateSessionMaxIterations } from '../session/index.js';
 import { saveIterationLog, buildSubagentTrace, getRecentProgressSummary, getCodebasePatternsForPrompt } from '../logs/index.js';
 import { performAutoCommit } from './auto-commit.js';
@@ -978,6 +982,7 @@ export class ExecutionEngine {
       stdout: { writeChain: Promise.resolve() },
       stderr: { writeChain: Promise.resolve() },
     };
+    const iterationUsageAccumulator = new TokenUsageAccumulator();
 
     const closeRawOutputStream = async (stream: RawStreamName): Promise<void> => {
       const streamState = rawOutput[stream];
@@ -1068,6 +1073,20 @@ export class ExecutionEngine {
         // Callback for pre-parsed JSONL messages (used by Claude and OpenCode plugins)
         // This receives raw JSON objects directly from the agent's parsed JSONL output.
         onJsonlMessage: (message: Record<string, unknown>) => {
+          const usageSample = extractTokenUsageFromJsonObject(message);
+          if (usageSample) {
+            iterationUsageAccumulator.add(usageSample);
+            if (iterationUsageAccumulator.hasData()) {
+              this.emit({
+                type: 'agent:usage',
+                timestamp: new Date().toISOString(),
+                taskId: task.id,
+                iteration,
+                usage: iterationUsageAccumulator.getSummary(),
+              });
+            }
+          }
+
           // Check if this is OpenCode format (has 'part' with 'tool' property)
           const part = message.part as Record<string, unknown> | undefined;
           if (message.type === 'tool_use' && part?.tool) {
@@ -1307,7 +1326,10 @@ export class ExecutionEngine {
         taskCompleted,
         promiseComplete,
         durationMs,
-        usage: summarizeTokenUsageFromOutput(agentResult.stdout),
+        usage:
+          (iterationUsageAccumulator.hasData()
+            ? iterationUsageAccumulator.getSummary()
+            : undefined) ?? summarizeTokenUsageFromOutput(agentResult.stdout),
         startedAt: startedAt.toISOString(),
         endedAt: endedAt.toISOString(),
       };

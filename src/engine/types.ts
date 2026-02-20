@@ -215,6 +215,7 @@ export type EngineEventType =
   | 'task:auto-commit-failed'
   | 'task:auto-commit-skipped'
   | 'agent:output'
+  | 'agent:usage'
   | 'agent:switched'
   | 'agent:all-limited'
   | 'agent:recovery-attempted'
@@ -522,6 +523,20 @@ export interface AgentOutputEvent extends EngineEventBase {
 }
 
 /**
+ * Agent token usage event (streaming).
+ * Emitted when structured JSONL usage telemetry is observed during execution.
+ */
+export interface AgentUsageEvent extends EngineEventBase {
+  type: 'agent:usage';
+  /** Task that emitted this usage update (if available) */
+  taskId?: string;
+  /** Iteration number */
+  iteration: number;
+  /** Aggregated usage summary up to this point in the iteration */
+  usage: TokenUsageSummary;
+}
+
+/**
  * Agent switched event - emitted when the engine switches between primary and fallback agents.
  */
 export interface AgentSwitchedEvent extends EngineEventBase {
@@ -612,6 +627,7 @@ export type EngineEvent =
   | TaskAutoCommitFailedEvent
   | TaskAutoCommitSkippedEvent
   | AgentOutputEvent
+  | AgentUsageEvent
   | AgentSwitchedEvent
   | AllAgentsLimitedEvent
   | AgentRecoveryAttemptedEvent
