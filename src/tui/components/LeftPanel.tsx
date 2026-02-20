@@ -26,7 +26,7 @@ function truncateText(text: string, maxWidth: number): string {
 function formatTaskUsageIndicator(task: TaskItem): string {
   const usage = task.usage;
   if (!usage) {
-    return 'c-- t0';
+    return '';
   }
 
   const totalTokens =
@@ -72,10 +72,12 @@ function TaskRow({
   const idDisplay = task.id;
   const indentWidth = indentLevel * 2;
   const usageIndicator = formatTaskUsageIndicator(task);
-  const usageIndicatorWidth = usageIndicator.length + 1;
+  const hasUsageIndicator = usageIndicator.length > 0;
+  const usageIndicatorWidth = hasUsageIndicator ? usageIndicator.length + 1 : 0;
   const availableForTitle = Math.max(0, maxWidth - indentWidth - 3 - idDisplay.length);
   const minimalTitlePlusIndicator = 5 + usageIndicator.length + 1;
-  const shouldShowUsageIndicator = availableForTitle > minimalTitlePlusIndicator;
+  const shouldShowUsageIndicator =
+    hasUsageIndicator && availableForTitle > minimalTitlePlusIndicator;
   const titleWidth = shouldShowUsageIndicator
     ? Math.max(5, availableForTitle - usageIndicatorWidth)
     : Math.max(5, availableForTitle);

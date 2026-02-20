@@ -8,11 +8,14 @@
  * Examples: 950 -> "950", 1250 -> "1.3k", 1250000 -> "1.3m"
  */
 export function formatTokenCount(tokens: number): string {
-  if (tokens >= 1_000_000) {
-    return `${(tokens / 1_000_000).toFixed(1).replace(/\.0$/, '')}m`;
+  const value = Number(tokens);
+  const safeTokens = Number.isFinite(value) && value >= 0 ? Math.floor(value) : 0;
+
+  if (safeTokens >= 1_000_000) {
+    return `${(safeTokens / 1_000_000).toFixed(1).replace(/\.0$/, '')}m`;
   }
-  if (tokens >= 1_000) {
-    return `${(tokens / 1_000).toFixed(1).replace(/\.0$/, '')}k`;
+  if (safeTokens >= 1_000) {
+    return `${(safeTokens / 1_000).toFixed(1).replace(/\.0$/, '')}k`;
   }
-  return String(tokens);
+  return String(safeTokens);
 }

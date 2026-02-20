@@ -1353,10 +1353,9 @@ export class ExecutionEngine {
         taskCompleted,
         promiseComplete,
         durationMs,
-        usage:
-          (iterationUsageAccumulator.hasData()
-            ? iterationUsageAccumulator.getSummary()
-            : undefined) ?? summarizeTokenUsageFromOutput(agentResult.stdout),
+        usage: iterationUsageAccumulator.hasData()
+          ? iterationUsageAccumulator.getSummary()
+          : summarizeTokenUsageFromOutput(agentResult.stdout),
         startedAt: startedAt.toISOString(),
         endedAt: endedAt.toISOString(),
       };

@@ -567,7 +567,17 @@ function TimingSummary({
       })()
     : null;
 
-  const hasUsageTelemetry = usage !== undefined && usage.events > 0;
+  const hasUsageTelemetry =
+    usage !== undefined &&
+    (
+      usage.events > 0 ||
+      (usage.inputTokens ?? 0) > 0 ||
+      (usage.outputTokens ?? 0) > 0 ||
+      (usage.totalTokens ?? 0) > 0 ||
+      usage.remainingContextTokens !== undefined ||
+      usage.contextWindowTokens !== undefined ||
+      usage.remainingContextPercent !== undefined
+    );
   const inputTokens = usage?.inputTokens ?? 0;
   const outputTokens = usage?.outputTokens ?? 0;
   const totalTokens = usage?.totalTokens ?? inputTokens + outputTokens;
