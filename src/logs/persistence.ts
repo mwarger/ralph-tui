@@ -582,6 +582,7 @@ function parseMetadataHeader(header: string): IterationLogMetadata | null {
             contextWindowTokens,
             remainingContextTokens,
             remainingContextPercent,
+            // events is not persisted in metadata headers; default to 0 when parsing from disk.
             events: 0,
           }
         : undefined;

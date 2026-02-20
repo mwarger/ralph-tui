@@ -985,6 +985,33 @@ export class ExecutionEngine {
       stderr: { writeChain: Promise.resolve() },
     };
     const iterationUsageAccumulator = new TokenUsageAccumulator();
+    const emitStreamingTelemetry = (message: Record<string, unknown>): void => {
+      const detectedModel = extractModelFromJsonObject(message);
+      if (detectedModel && detectedModel !== this.state.currentModel) {
+        this.state.currentModel = detectedModel;
+        this.emit({
+          type: 'agent:model',
+          timestamp: new Date().toISOString(),
+          taskId: task.id,
+          iteration,
+          model: detectedModel,
+        });
+      }
+
+      const usageSample = extractTokenUsageFromJsonObject(message);
+      if (usageSample) {
+        iterationUsageAccumulator.add(usageSample);
+        if (iterationUsageAccumulator.hasData()) {
+          this.emit({
+            type: 'agent:usage',
+            timestamp: new Date().toISOString(),
+            taskId: task.id,
+            iteration,
+            usage: iterationUsageAccumulator.getSummary(),
+          });
+        }
+      }
+    };
 
     const closeRawOutputStream = async (stream: RawStreamName): Promise<void> => {
       const streamState = rawOutput[stream];
@@ -1075,31 +1102,7 @@ export class ExecutionEngine {
         // Callback for pre-parsed JSONL messages (used by Claude and OpenCode plugins)
         // This receives raw JSON objects directly from the agent's parsed JSONL output.
         onJsonlMessage: (message: Record<string, unknown>) => {
-          const detectedModel = extractModelFromJsonObject(message);
-          if (detectedModel && detectedModel !== this.state.currentModel) {
-            this.state.currentModel = detectedModel;
-            this.emit({
-              type: 'agent:model',
-              timestamp: new Date().toISOString(),
-              taskId: task.id,
-              iteration,
-              model: detectedModel,
-            });
-          }
-
-          const usageSample = extractTokenUsageFromJsonObject(message);
-          if (usageSample) {
-            iterationUsageAccumulator.add(usageSample);
-            if (iterationUsageAccumulator.hasData()) {
-              this.emit({
-                type: 'agent:usage',
-                timestamp: new Date().toISOString(),
-                taskId: task.id,
-                iteration,
-                usage: iterationUsageAccumulator.getSummary(),
-              });
-            }
-          }
+          emitStreamingTelemetry(message);
 
           // Check if this is OpenCode format (has 'part' with 'tool' property)
           const part = message.part as Record<string, unknown> | undefined;
@@ -1157,10 +1160,15 @@ export class ExecutionEngine {
             for (const result of results) {
               if (result.success) {
                 if (isDroidJsonlMessage(result.message)) {
+                  emitStreamingTelemetry(result.message.raw);
                   for (const normalized of toClaudeJsonlMessages(result.message)) {
                     this.subagentParser.processMessage(normalized);
                   }
                 } else {
+                  const parsed = result.message as unknown;
+                  if (typeof parsed === 'object' && parsed !== null) {
+                    emitStreamingTelemetry(parsed as Record<string, unknown>);
+                  }
                   this.subagentParser.processMessage(result.message);
                 }
               }
@@ -1198,10 +1206,15 @@ export class ExecutionEngine {
         for (const result of remaining) {
           if (result.success) {
             if (isDroidJsonlMessage(result.message)) {
+              emitStreamingTelemetry(result.message.raw);
               for (const normalized of toClaudeJsonlMessages(result.message)) {
                 this.subagentParser.processMessage(normalized);
               }
             } else {
+              const parsed = result.message as unknown;
+              if (typeof parsed === 'object' && parsed !== null) {
+                emitStreamingTelemetry(parsed as Record<string, unknown>);
+              }
               this.subagentParser.processMessage(result.message);
             }
           }

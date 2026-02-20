@@ -7,6 +7,7 @@ import type { ReactNode } from 'react';
 import { memo } from 'react';
 import { colors, getTaskStatusColor, getTaskStatusIndicator } from '../theme.js';
 import type { LeftPanelProps, TaskItem } from '../types.js';
+import { formatTokenCount } from '../utils/token-format.js';
 
 /**
  * Truncate text to fit within a maximum width
@@ -16,16 +17,6 @@ function truncateText(text: string, maxWidth: number): string {
   if (text.length <= maxWidth) return text;
   if (maxWidth <= 3) return text.slice(0, maxWidth);
   return text.slice(0, maxWidth - 1) + '…';
-}
-
-function formatTokenCount(tokens: number): string {
-  if (tokens >= 1_000_000) {
-    return `${(tokens / 1_000_000).toFixed(1).replace(/\.0$/, '')}m`;
-  }
-  if (tokens >= 1_000) {
-    return `${(tokens / 1_000).toFixed(1).replace(/\.0$/, '')}k`;
-  }
-  return String(tokens);
 }
 
 /**
@@ -77,13 +68,18 @@ function TaskRow({
 
   // Format: "[indent]✓ task-id title"
   // Calculate available width:
-  // maxWidth - indent - indicator(1) - space(1) - id - space(1) - usageIndicator - space(1)
+  // maxWidth - indent - indicator(1) - space(1) - id - space(1)
   const idDisplay = task.id;
   const indentWidth = indentLevel * 2;
   const usageIndicator = formatTaskUsageIndicator(task);
   const usageIndicatorWidth = usageIndicator.length + 1;
-  const titleWidth = maxWidth - indentWidth - 3 - idDisplay.length - usageIndicatorWidth;
-  const truncatedTitle = truncateText(task.title, Math.max(5, titleWidth));
+  const availableForTitle = Math.max(0, maxWidth - indentWidth - 3 - idDisplay.length);
+  const minimalTitlePlusIndicator = 5 + usageIndicator.length + 1;
+  const shouldShowUsageIndicator = availableForTitle > minimalTitlePlusIndicator;
+  const titleWidth = shouldShowUsageIndicator
+    ? Math.max(5, availableForTitle - usageIndicatorWidth)
+    : Math.max(5, availableForTitle);
+  const truncatedTitle = truncateText(task.title, titleWidth);
 
   // Greyed-out colors for closed tasks
   const idColor = isClosed ? colors.fg.dim : colors.fg.muted;
@@ -108,7 +104,7 @@ function TaskRow({
         <span fg={statusColor}>{statusIndicator}</span>
         <span fg={idColor}> {idDisplay}</span>
         <span fg={titleColor}> {truncatedTitle}</span>
-        <span fg={colors.fg.dim}> {usageIndicator}</span>
+        {shouldShowUsageIndicator && <span fg={colors.fg.dim}> {usageIndicator}</span>}
       </text>
     </box>
   );

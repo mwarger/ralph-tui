@@ -8,7 +8,7 @@
 import { useKeyboard, useTerminalDimensions, useRenderer } from '@opentui/react';
 import type { KeyEvent } from '@opentui/core';
 import type { ReactNode } from 'react';
-import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
+import { useState, useCallback, useEffect, useMemo, useRef, startTransition } from 'react';
 import { colors, layout } from '../theme.js';
 import type { RalphStatus, TaskStatus } from '../theme.js';
 import type { TaskItem, BlockerInfo, DetailsViewMode, IterationTimingInfo, SubagentTreeNode } from '../types.js';
@@ -453,6 +453,27 @@ function normalizeUsage(usage: TokenUsageSummary, contextWindow?: number): Token
   return withContextWindow({ ...usage, totalTokens: normalizedTotal }, contextWindow);
 }
 
+function areUsageSummariesEqual(
+  a: TokenUsageSummary | undefined,
+  b: TokenUsageSummary | undefined
+): boolean {
+  if (a === b) {
+    return true;
+  }
+  if (!a || !b) {
+    return false;
+  }
+  return (
+    a.inputTokens === b.inputTokens &&
+    a.outputTokens === b.outputTokens &&
+    a.totalTokens === b.totalTokens &&
+    a.contextWindowTokens === b.contextWindowTokens &&
+    a.remainingContextTokens === b.remainingContextTokens &&
+    a.remainingContextPercent === b.remainingContextPercent &&
+    a.events === b.events
+  );
+}
+
 /**
  * Main RunApp component for execution view
  */
@@ -730,6 +751,58 @@ export function RunApp({
   // Get the selected tab's connection status from instanceTabs
   // This is used to trigger data fetch when connection completes
   const selectedTabStatus = instanceTabs?.[selectedTabIndex]?.status;
+  const remoteSubagentTreeRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const remoteSubagentTreeRefreshInFlightRef = useRef(false);
+
+  const updateRemoteUsage = useCallback(
+    (usage: TokenUsageSummary | undefined, taskId?: string) => {
+      const resolvedTaskId = taskId ?? remoteCurrentTaskIdRef.current;
+      if (!usage || !resolvedTaskId) {
+        return;
+      }
+
+      const normalized = normalizeUsage(usage, remoteContextWindowRef.current);
+      setRemoteTaskUsageMap((prev) => {
+        const existing = prev.get(resolvedTaskId);
+        if (areUsageSummariesEqual(existing, normalized)) {
+          return prev;
+        }
+        const next = new Map(prev);
+        next.set(resolvedTaskId, normalized);
+        return next;
+      });
+    },
+    []
+  );
+
+  const refreshRemoteSubagentTree = useCallback(() => {
+    if (!instanceManager) {
+      return;
+    }
+
+    if (remoteSubagentTreeRefreshTimerRef.current !== undefined) {
+      return;
+    }
+
+    remoteSubagentTreeRefreshTimerRef.current = setTimeout(() => {
+      remoteSubagentTreeRefreshTimerRef.current = undefined;
+
+      if (remoteSubagentTreeRefreshInFlightRef.current) {
+        return;
+      }
+
+      remoteSubagentTreeRefreshInFlightRef.current = true;
+      instanceManager.getRemoteState().then((state) => {
+        if (state?.subagentTree) {
+          setRemoteSubagentTree(state.subagentTree);
+        }
+      }).catch((err) => {
+        console.error('Failed to refresh remote state:', err);
+      }).finally(() => {
+        remoteSubagentTreeRefreshInFlightRef.current = false;
+      });
+    }, 200);
+  }, [instanceManager]);
 
   // Fetch remote data when switching to a remote tab AND when it becomes connected
   useEffect(() => {
@@ -887,42 +960,13 @@ export function RunApp({
           if (event.stream === 'stdout') {
             setRemoteOutput((prev) => prev + event.data);
             remoteOutputParserRef.current.push(event.data);
-            const usage = remoteOutputParserRef.current.getUsage();
-            const taskId = event.taskId ?? remoteCurrentTaskIdRef.current;
-            if (usage && taskId) {
-              setRemoteTaskUsageMap((prev) => {
-                const next = new Map(prev);
-                next.set(
-                  taskId,
-                  normalizeUsage(usage, remoteContextWindowRef.current)
-                );
-                return next;
-              });
-            }
+            updateRemoteUsage(remoteOutputParserRef.current.getUsage(), event.taskId);
           }
-          // Refresh remote state to get updated subagent tree
-          instanceManager.getRemoteState().then((state) => {
-            if (state?.subagentTree) {
-              setRemoteSubagentTree(state.subagentTree);
-            }
-          }).catch((err) => {
-            console.error('Failed to refresh remote state:', err);
-          });
+          // Refresh subagent tree at a throttled cadence to avoid fetching remote state per chunk.
+          refreshRemoteSubagentTree();
           break;
         case 'agent:usage':
-          {
-            const taskId = event.taskId ?? remoteCurrentTaskIdRef.current;
-            if (taskId) {
-              setRemoteTaskUsageMap((prev) => {
-                const next = new Map(prev);
-                next.set(
-                  taskId,
-                  normalizeUsage(event.usage, remoteContextWindowRef.current)
-                );
-                return next;
-              });
-            }
-          }
+          updateRemoteUsage(event.usage, event.taskId);
           break;
         case 'agent:model':
           setRemoteModel(event.model);
@@ -931,14 +975,7 @@ export function RunApp({
           {
             const usage = event.result.usage;
             if (usage) {
-              setRemoteTaskUsageMap((prev) => {
-                const next = new Map(prev);
-                next.set(
-                  event.result.task.id,
-                  normalizeUsage(usage, remoteContextWindowRef.current)
-                );
-                return next;
-              });
+              updateRemoteUsage(usage, event.result.task.id);
             }
           }
           break;
@@ -967,10 +1004,22 @@ export function RunApp({
     });
 
     return () => {
+      if (remoteSubagentTreeRefreshTimerRef.current !== undefined) {
+        clearTimeout(remoteSubagentTreeRefreshTimerRef.current);
+        remoteSubagentTreeRefreshTimerRef.current = undefined;
+      }
+      remoteSubagentTreeRefreshInFlightRef.current = false;
       unsubscribe();
       instanceManager.unsubscribeFromSelectedRemote();
     };
-  }, [isViewingRemote, selectedTabIndex, selectedTabStatus, instanceManager]);
+  }, [
+    isViewingRemote,
+    selectedTabIndex,
+    selectedTabStatus,
+    instanceManager,
+    updateRemoteUsage,
+    refreshRemoteSubagentTree,
+  ]);
 
   // Computed display values that switch between local and remote state
   // These are used in the UI to show the appropriate data based on which tab is selected
@@ -988,10 +1037,8 @@ export function RunApp({
     let inputTokens = 0;
     let outputTokens = 0;
     let totalTokens = 0;
-    let tasksWithUsage = 0;
 
     for (const usage of usageMap.values()) {
-      tasksWithUsage += 1;
       inputTokens += usage.inputTokens ?? 0;
       outputTokens += usage.outputTokens ?? 0;
       totalTokens += usage.totalTokens > 0
@@ -999,15 +1046,10 @@ export function RunApp({
         : (usage.inputTokens ?? 0) + (usage.outputTokens ?? 0);
     }
 
-    if (tasksWithUsage === 0) {
-      return undefined;
-    }
-
     return {
       inputTokens,
       outputTokens,
       totalTokens,
-      tasksWithUsage,
     };
   }, [isViewingRemote, taskUsageMap, remoteTaskUsageMap]);
 
@@ -1057,17 +1099,20 @@ export function RunApp({
       } else {
         // Fallback for model strings without provider prefix (e.g., "gpt-4o", "sonnet").
         const providers = await getProviders();
-        for (const provider of providers) {
-          const models = await getModelsForProvider(provider.id);
-          const match = models.find(
+        const allProviderModels = await Promise.all(
+          providers.map((provider) => getModelsForProvider(provider.id))
+        );
+        const normalizedKey = key.toLowerCase();
+        const match = allProviderModels
+          .flat()
+          .find(
             (m) =>
               m.id === key ||
-              m.name.toLowerCase() === key.toLowerCase()
+              m.name.toLowerCase() === normalizedKey
           );
-          if (match?.contextLimit && Number.isFinite(match.contextLimit)) {
-            modelContextCacheRef.current.set(cacheKey, match.contextLimit);
-            return match.contextLimit;
-          }
+        if (match?.contextLimit && Number.isFinite(match.contextLimit)) {
+          modelContextCacheRef.current.set(cacheKey, match.contextLimit);
+          return match.contextLimit;
         }
       }
     } catch {
@@ -1121,43 +1166,45 @@ export function RunApp({
       return;
     }
 
-    setTaskUsageMap((prev) => {
-      if (prev.size === 0) {
-        return prev;
-      }
-      const next = new Map<string, TokenUsageSummary>();
-      for (const [taskId, usage] of prev.entries()) {
-        next.set(taskId, normalizeUsage(usage, localContextWindow));
-      }
-      return next;
-    });
-
-    setIterations((prev) =>
-      prev.map((iteration) =>
-        iteration.usage
-          ? {
-              ...iteration,
-              usage: normalizeUsage(iteration.usage, localContextWindow),
-            }
-          : iteration
-      )
-    );
-
-    setHistoricalOutputCache((prev) => {
-      if (prev.size === 0) {
-        return prev;
-      }
-      const next = new Map(prev);
-      for (const [taskId, cacheEntry] of prev.entries()) {
-        if (!cacheEntry.usage) {
-          continue;
+    startTransition(() => {
+      setTaskUsageMap((prev) => {
+        if (prev.size === 0) {
+          return prev;
         }
-        next.set(taskId, {
-          ...cacheEntry,
-          usage: normalizeUsage(cacheEntry.usage, localContextWindow),
-        });
-      }
-      return next;
+        const next = new Map<string, TokenUsageSummary>();
+        for (const [taskId, usage] of prev.entries()) {
+          next.set(taskId, normalizeUsage(usage, localContextWindow));
+        }
+        return next;
+      });
+
+      setIterations((prev) =>
+        prev.map((iteration) =>
+          iteration.usage
+            ? {
+                ...iteration,
+                usage: normalizeUsage(iteration.usage, localContextWindow),
+              }
+            : iteration
+        )
+      );
+
+      setHistoricalOutputCache((prev) => {
+        if (prev.size === 0) {
+          return prev;
+        }
+        const next = new Map(prev);
+        for (const [taskId, cacheEntry] of prev.entries()) {
+          if (!cacheEntry.usage) {
+            continue;
+          }
+          next.set(taskId, {
+            ...cacheEntry,
+            usage: normalizeUsage(cacheEntry.usage, localContextWindow),
+          });
+        }
+        return next;
+      });
     });
   }, [localContextWindow]);
 
@@ -1279,10 +1326,16 @@ export function RunApp({
     }
 
     const usageMap = isViewingRemote ? remoteTaskUsageMap : taskUsageMap;
-    sourceTasks = sourceTasks.map((task) => ({
-      ...task,
-      usage: usageMap.get(task.id),
-    }));
+    sourceTasks = sourceTasks.map((task) => {
+      const nextUsage = usageMap.get(task.id);
+      if (areUsageSummariesEqual(task.usage, nextUsage)) {
+        return task;
+      }
+      return {
+        ...task,
+        usage: nextUsage,
+      };
+    });
 
     const filtered = showClosedTasks ? sourceTasks : sourceTasks.filter((t) => t.status !== 'closed');
     return [...filtered].sort((a, b) => {
@@ -1667,9 +1720,14 @@ export function RunApp({
             const usage = outputParserRef.current.getUsage();
             const taskId = event.taskId ?? currentTaskIdRef.current;
             if (usage && taskId) {
+              const normalized = normalizeUsage(usage, localContextWindowRef.current);
               setTaskUsageMap((prev) => {
+                const existing = prev.get(taskId);
+                if (areUsageSummariesEqual(existing, normalized)) {
+                  return prev;
+                }
                 const next = new Map(prev);
-                next.set(taskId, normalizeUsage(usage, localContextWindowRef.current));
+                next.set(taskId, normalized);
                 return next;
               });
             }
@@ -1684,9 +1742,14 @@ export function RunApp({
           {
             const taskId = event.taskId ?? currentTaskIdRef.current;
             if (taskId) {
+              const normalized = normalizeUsage(event.usage, localContextWindowRef.current);
               setTaskUsageMap((prev) => {
+                const existing = prev.get(taskId);
+                if (areUsageSummariesEqual(existing, normalized)) {
+                  return prev;
+                }
                 const next = new Map(prev);
-                next.set(taskId, normalizeUsage(event.usage, localContextWindowRef.current));
+                next.set(taskId, normalized);
                 return next;
               });
             }
@@ -2653,7 +2716,7 @@ export function RunApp({
           iteration: 1,
           output,
           segments: [{ text: output }],
-          usage: summarizeTokenUsageFromOutput(output),
+          usage: effectiveTaskId ? taskUsageMap.get(effectiveTaskId) : undefined,
           timing: { isRunning },
         };
       }

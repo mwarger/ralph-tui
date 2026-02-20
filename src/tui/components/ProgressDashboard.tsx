@@ -7,6 +7,7 @@
 import type { ReactNode } from 'react';
 import { colors, statusIndicators, layout, type RalphStatus } from '../theme.js';
 import type { SandboxConfig, SandboxMode } from '../../config/types.js';
+import { formatTokenCount } from '../utils/token-format.js';
 
 /**
  * Props for the ProgressDashboard component
@@ -59,7 +60,6 @@ export interface ProgressDashboardProps {
     inputTokens: number;
     outputTokens: number;
     totalTokens: number;
-    tasksWithUsage: number;
   };
 }
 
@@ -70,19 +70,6 @@ function truncateText(text: string, maxWidth: number): string {
   if (text.length <= maxWidth) return text;
   if (maxWidth <= 3) return text.slice(0, maxWidth);
   return text.slice(0, maxWidth - 1) + '…';
-}
-
-/**
- * Format token counts in a compact form for dashboard display.
- */
-function formatTokenCount(tokens: number): string {
-  if (tokens >= 1_000_000) {
-    return `${(tokens / 1_000_000).toFixed(1).replace(/\.0$/, '')}m`;
-  }
-  if (tokens >= 1_000) {
-    return `${(tokens / 1_000).toFixed(1).replace(/\.0$/, '')}k`;
-  }
-  return String(tokens);
 }
 
 /**
@@ -234,7 +221,11 @@ export function ProgressDashboard({
         )}
 
         {/* Parallel worker count - shown when workers are active */}
-        {activeWorkerCount != null && activeWorkerCount > 0 && totalWorkerCount != null && (
+        {activeWorkerCount !== undefined &&
+          activeWorkerCount !== null &&
+          activeWorkerCount > 0 &&
+          totalWorkerCount !== undefined &&
+          totalWorkerCount !== null && (
           <box style={{ flexDirection: 'row' }}>
             <text fg={colors.status.info}>Workers: </text>
             <text fg={colors.status.success}>{activeWorkerCount} active</text>

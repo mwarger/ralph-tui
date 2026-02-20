@@ -71,6 +71,9 @@ const CONTEXT_WINDOW_KEYS = [
   'context_window',
   'maxContextTokens',
   'max_context_tokens',
+] as const;
+
+const CONTEXT_WINDOW_LIMIT_KEYS = [
   'maxTokens',
   'max_tokens',
 ] as const;
@@ -185,7 +188,13 @@ function normalizeModelString(value: string): string | undefined {
   return trimmed;
 }
 
-function normalizePercent(value?: number): number | undefined {
+/**
+ * normalizePercent() accepts either percent values (0-100) or fractions (0-1).
+ * Heuristic: values in (0, 1] are treated as fractions and multiplied by 100.
+ * Limitation: an input like 0.5 intended as 0.5% is interpreted as 50%.
+ * Callers should pass the intended unit consistently (0-100 or 0-1), or normalize beforehand.
+ */
+export function normalizePercent(value?: number): number | undefined {
   if (value === undefined) {
     return undefined;
   }
@@ -196,6 +205,23 @@ function normalizePercent(value?: number): number | undefined {
   return Math.min(100, Math.max(0, asPercent));
 }
 
+function readContextWindowTokens(record: JsonRecord): number | undefined {
+  const directContextWindow = readFirstNumber(record, CONTEXT_WINDOW_KEYS);
+  if (directContextWindow !== undefined) {
+    return directContextWindow;
+  }
+
+  // Some payloads use maxTokens/max_tokens for generation limits instead of model context windows.
+  // Treat these keys as context windows only when the value is large enough to plausibly represent
+  // a model context size rather than a per-response output cap.
+  const contextLikeMaxTokens = readFirstNumber(record, CONTEXT_WINDOW_LIMIT_KEYS);
+  if (contextLikeMaxTokens !== undefined && contextLikeMaxTokens > 10_000) {
+    return contextLikeMaxTokens;
+  }
+
+  return undefined;
+}
+
 function hasUsageSignal(record: JsonRecord): boolean {
   const keys = new Set(Object.keys(record));
   const signalGroups = [
@@ -203,6 +229,7 @@ function hasUsageSignal(record: JsonRecord): boolean {
     TOKEN_OUTPUT_KEYS,
     TOKEN_TOTAL_KEYS,
     CONTEXT_WINDOW_KEYS,
+    CONTEXT_WINDOW_LIMIT_KEYS,
     CONTEXT_REMAINING_KEYS,
     CONTEXT_REMAINING_PERCENT_KEYS,
   ] as const;
@@ -328,7 +355,7 @@ function parseUsageRecord(record: JsonRecord): TokenUsageSample | undefined {
   const inputTokens = readFirstNumber(record, TOKEN_INPUT_KEYS);
   const outputTokens = readFirstNumber(record, TOKEN_OUTPUT_KEYS);
   const totalTokens = readFirstNumber(record, TOKEN_TOTAL_KEYS);
-  const contextWindowTokens = readFirstNumber(record, CONTEXT_WINDOW_KEYS);
+  const contextWindowTokens = readContextWindowTokens(record);
   const remainingContextTokens = readFirstNumber(record, CONTEXT_REMAINING_KEYS);
   const remainingContextPercent = normalizePercent(
     readFirstNumber(record, CONTEXT_REMAINING_PERCENT_KEYS)

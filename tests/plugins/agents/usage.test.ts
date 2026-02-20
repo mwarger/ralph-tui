@@ -7,6 +7,7 @@ import { describe, expect, test } from 'bun:test';
 import {
   extractModelFromJsonObject,
   extractTokenUsageFromJsonLine,
+  normalizePercent,
   summarizeTokenUsageFromOutput,
   withContextWindow,
   TokenUsageAccumulator,
@@ -44,6 +45,41 @@ describe('extractTokenUsageFromJsonLine', () => {
     expect(usage?.inputTokens).toBe(350);
     expect(usage?.outputTokens).toBe(150);
   });
+
+  test('returns undefined for invalid, empty, and non-JSON lines', () => {
+    expect(extractTokenUsageFromJsonLine('')).toBeUndefined();
+    expect(extractTokenUsageFromJsonLine('not-json')).toBeUndefined();
+    expect(extractTokenUsageFromJsonLine('[]')).toBeUndefined();
+    expect(extractTokenUsageFromJsonLine('{invalid')).toBeUndefined();
+  });
+
+  test('treats small max_tokens as generation limit, not context window', () => {
+    const line = JSON.stringify({
+      usage: {
+        input_tokens: 100,
+        output_tokens: 50,
+        max_tokens: 4096,
+      },
+    });
+
+    const usage = extractTokenUsageFromJsonLine(line);
+    expect(usage).toBeDefined();
+    expect(usage?.contextWindowTokens).toBeUndefined();
+  });
+
+  test('accepts large max_tokens as context window fallback', () => {
+    const line = JSON.stringify({
+      usage: {
+        input_tokens: 100,
+        output_tokens: 50,
+        max_tokens: 128000,
+      },
+    });
+
+    const usage = extractTokenUsageFromJsonLine(line);
+    expect(usage).toBeDefined();
+    expect(usage?.contextWindowTokens).toBe(128000);
+  });
 });
 
 describe('TokenUsageAccumulator', () => {
@@ -60,6 +96,29 @@ describe('TokenUsageAccumulator', () => {
     expect(summary.remainingContextTokens).toBe(3800);
     expect(summary.remainingContextPercent).toBeCloseTo(76, 1);
   });
+
+  test('reset clears totals and context fields', () => {
+    const accumulator = new TokenUsageAccumulator();
+    accumulator.add({
+      inputTokens: 10,
+      outputTokens: 5,
+      totalTokens: 15,
+      contextWindowTokens: 1000,
+      remainingContextTokens: 985,
+      remainingContextPercent: 98.5,
+    });
+
+    accumulator.reset();
+    const summary = accumulator.getSummary();
+
+    expect(summary.inputTokens).toBe(0);
+    expect(summary.outputTokens).toBe(0);
+    expect(summary.totalTokens).toBe(0);
+    expect(summary.contextWindowTokens).toBeUndefined();
+    expect(summary.remainingContextTokens).toBeUndefined();
+    expect(summary.remainingContextPercent).toBeUndefined();
+    expect(summary.events).toBe(0);
+  });
 });
 
 describe('summarizeTokenUsageFromOutput', () => {
@@ -74,6 +133,19 @@ describe('summarizeTokenUsageFromOutput', () => {
     expect(summary?.inputTokens).toBe(300);
     expect(summary?.outputTokens).toBe(130);
     expect(summary?.totalTokens).toBe(430);
+  });
+
+  test('summarizes total-only usage lines', () => {
+    const output = [
+      JSON.stringify({ usage: { total_tokens: 200 } }),
+      JSON.stringify({ stats: { total_tokens: 300 } }),
+    ].join('\n');
+
+    const summary = summarizeTokenUsageFromOutput(output);
+    expect(summary).toBeDefined();
+    expect(summary?.inputTokens).toBe(0);
+    expect(summary?.outputTokens).toBe(0);
+    expect(summary?.totalTokens).toBe(500);
   });
 });
 
@@ -98,5 +170,15 @@ describe('extractModelFromJsonObject', () => {
     });
 
     expect(model).toBe('gpt-5');
+  });
+});
+
+describe('normalizePercent', () => {
+  test('converts fractional values to percent', () => {
+    expect(normalizePercent(0.76)).toBeCloseTo(76, 5);
+  });
+
+  test('keeps already-percent values as-is', () => {
+    expect(normalizePercent(76)).toBe(76);
   });
 });

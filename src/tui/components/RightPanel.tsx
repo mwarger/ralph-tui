@@ -567,15 +567,13 @@ function TimingSummary({
       })()
     : null;
 
+  const hasUsageTelemetry = usage !== undefined && usage.events > 0;
   const inputTokens = usage?.inputTokens ?? 0;
   const outputTokens = usage?.outputTokens ?? 0;
-  const totalTokens =
-    usage && usage.totalTokens > 0
-      ? usage.totalTokens
-      : inputTokens + outputTokens;
-  const remainingTokens = usage?.remainingContextTokens;
-  const contextWindow = usage?.contextWindowTokens;
-  const remainingPercent = usage?.remainingContextPercent;
+  const totalTokens = usage?.totalTokens ?? inputTokens + outputTokens;
+  const remainingTokens = hasUsageTelemetry ? usage?.remainingContextTokens : undefined;
+  const contextWindow = hasUsageTelemetry ? usage?.contextWindowTokens : undefined;
+  const remainingPercent = hasUsageTelemetry ? usage?.remainingContextPercent : undefined;
 
   return (
     <box
@@ -624,7 +622,7 @@ function TimingSummary({
           </text>
         </box>
 
-        {usage ? (
+        {hasUsageTelemetry ? (
           <box style={{ flexDirection: 'row', gap: 3 }}>
             <text fg={colors.fg.muted}>
               Input: <span fg={colors.fg.secondary}>{formatTokenNumber(inputTokens)}</span>
@@ -646,14 +644,16 @@ function TimingSummary({
       {isRunning && (
         <box style={{ flexDirection: 'row', marginBottom: 1 }}>
           <text fg={colors.fg.muted}>Context: </text>
-          {usage && remainingPercent !== undefined ? (
+          {!hasUsageTelemetry ? (
+            <text fg={colors.fg.muted}>waiting for live telemetry...</text>
+          ) : remainingPercent !== undefined ? (
             <text fg={colors.accent.primary}>
               {remainingPercent.toFixed(1)}% remaining
             </text>
           ) : (
             <text fg={colors.fg.secondary}>window size unknown</text>
           )}
-          {usage && remainingTokens !== undefined && contextWindow !== undefined && (
+          {hasUsageTelemetry && remainingTokens !== undefined && contextWindow !== undefined && (
             <text fg={colors.fg.secondary}>
               {' '}
               ({formatTokenNumber(remainingTokens)} / {formatTokenNumber(contextWindow)} tokens)
