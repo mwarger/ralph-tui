@@ -37,6 +37,27 @@ interface BvRecommendation {
   action?: string;
   reasons: string[];
   unblocks?: number;
+  blocked_by?: string[];
+}
+
+/**
+ * Output from bv --robot-next (single best actionable task).
+ * Unlike --robot-triage recommendations, --robot-next is guaranteed
+ * to return only an unblocked task.
+ */
+interface BvRobotNextOutput {
+  generated_at: string;
+  data_hash: string;
+  output_format: string;
+  id: string;
+  title: string;
+  score: number;
+  reasons: string[];
+  unblocks: number;
+  claim_command: string;
+  show_command: string;
+  /** Present when no actionable items exist */
+  message?: string;
 }
 
 /**
@@ -189,71 +210,7 @@ async function execBd(
   });
 }
 
-/**
- * Convert bv priority (0-4) to TaskPriority.
- */
-function mapPriority(priority: number): TaskPriority {
-  const clamped = Math.max(0, Math.min(4, priority));
-  return clamped as TaskPriority;
-}
 
-/**
- * Convert bv status to TrackerTaskStatus.
- */
-function mapStatus(status: string): TrackerTaskStatus {
-  switch (status) {
-    case 'open':
-      return 'open';
-    case 'in_progress':
-      return 'in_progress';
-    case 'closed':
-      return 'completed';
-    case 'cancelled':
-      return 'cancelled';
-    default:
-      return 'open';
-  }
-}
-
-/**
- * Convert TrackerTaskStatus back to bd status.
- */
-function mapStatusToBd(status: TrackerTaskStatus): string {
-  switch (status) {
-    case 'open':
-      return 'open';
-    case 'in_progress':
-      return 'in_progress';
-    case 'completed':
-      return 'closed';
-    case 'cancelled':
-      return 'cancelled';
-    case 'blocked':
-      return 'open';
-    default:
-      return 'open';
-  }
-}
-
-/**
- * Convert a BvRecommendation to TrackerTask.
- */
-function recommendationToTask(rec: BvRecommendation): TrackerTask {
-  return {
-    id: rec.id,
-    title: rec.title,
-    status: mapStatus(rec.status),
-    priority: mapPriority(rec.priority),
-    labels: rec.labels,
-    type: rec.type,
-    metadata: {
-      bvScore: rec.score,
-      bvReasons: rec.reasons,
-      bvUnblocks: rec.unblocks,
-      bvBreakdown: rec.breakdown,
-    },
-  };
-}
 
 /**
  * Beads + bv tracker plugin implementation.
@@ -359,8 +316,15 @@ export class BeadsBvTrackerPlugin extends BeadsTrackerPlugin {
 
   /**
    * Get the next task using bv's smart algorithms.
-   * Uses bv --robot-triage for optimal task selection.
+   * Uses bv --robot-next which returns only the single best *unblocked* task.
    * Falls back to base beads behavior if bv is unavailable.
+   *
+   * Note: --robot-next is used instead of --robot-triage because triage
+   * recommendations include blocked tasks ranked by score. A blocked task
+   * with high graph importance (e.g., a review bead that unblocks many
+   * downstream tasks) can outscore actionable tasks, causing ralph-tui to
+   * select tasks whose dependencies haven't been completed yet.
+   * See: https://github.com/subsy/ralph-tui/issues/327
    */
   override async getNextTask(
     filter?: TaskFilter
@@ -371,8 +335,10 @@ export class BeadsBvTrackerPlugin extends BeadsTrackerPlugin {
     }
 
     try {
-      // Build bv command args
-      const args = ['--robot-triage'];
+      // Use --robot-next for task selection: guaranteed to return only
+      // an unblocked task, unlike --robot-triage which includes blocked
+      // tasks in its recommendations array.
+      const args = ['--robot-next'];
 
       // Apply label filter if configured
       const labels = this.getLabels();
@@ -385,73 +351,68 @@ export class BeadsBvTrackerPlugin extends BeadsTrackerPlugin {
       const { stdout, exitCode, stderr } = await execBv(args, this.getWorkingDir());
 
       if (exitCode !== 0) {
-        console.error('bv --robot-triage failed:', stderr);
+        console.error('bv --robot-next failed:', stderr);
         // Fall back to base beads behavior
         return super.getNextTask(filter);
       }
 
       // Parse bv output
-      let triageOutput: BvTriageOutput;
+      let nextOutput: BvRobotNextOutput;
       try {
-        triageOutput = JSON.parse(stdout) as BvTriageOutput;
-        this.lastTriageOutput = triageOutput;
+        nextOutput = JSON.parse(stdout) as BvRobotNextOutput;
       } catch (err) {
         console.error('Failed to parse bv output:', err);
         return super.getNextTask(filter);
       }
 
-      // Cache reasoning for all recommendations
-      this.cacheTaskReasoning(triageOutput);
-
-      // Filter recommendations to epic children if epicId is set
-      let recommendations = triageOutput.triage.recommendations;
-
-      const epicId = this.getEpicId();
-      if (filter?.parentId || epicId) {
-        const parentId = filter?.parentId ?? epicId;
-        // Get all epic children to filter recommendations
-        const epicChildren = await this.getEpicChildrenIds(parentId);
-        recommendations = recommendations.filter((rec) =>
-          epicChildren.includes(rec.id)
-        );
-      }
-
-      // Filter by status if specified
-      if (filter?.status) {
-        const statuses = Array.isArray(filter.status)
-          ? filter.status
-          : [filter.status];
-        const bdStatuses = statuses.map(mapStatusToBd);
-        recommendations = recommendations.filter((rec) =>
-          bdStatuses.includes(rec.status)
-        );
-      }
-
-      // Return the top recommendation, or fall back to base beads if no bv matches
-      // This handles the case where bv's global top-N recommendations don't include
-      // any tasks from the current epic (e.g., when working on a less-prominent epic)
-      if (recommendations.length === 0) {
+      // --robot-next returns { message: "No actionable items available" }
+      // when nothing is unblocked
+      if (!nextOutput.id || nextOutput.message) {
         return super.getNextTask(filter);
       }
 
-      const topRec = recommendations[0]!;
+      // Verify the selected task belongs to the epic if epicId is set
+      const epicId = this.getEpicId();
+      if (filter?.parentId || epicId) {
+        const parentId = filter?.parentId ?? epicId;
+        const epicChildren = await this.getEpicChildrenIds(parentId);
+        if (!epicChildren.includes(nextOutput.id)) {
+          // bv's top pick isn't in our epic — fall back to base beads
+          // which filters by epic natively
+          return super.getNextTask(filter);
+        }
+      }
+
+      // Refresh triage data in background for metadata enrichment
+      // (getTasks, cacheTaskReasoning, getTriageStats still use triage data)
+      void this.refreshTriage();
 
       // Get full task details from bd for complete information
-      const fullTask = await this.getTask(topRec.id);
+      const fullTask = await this.getTask(nextOutput.id);
       if (fullTask) {
-        // Augment with bv metadata
+        // Augment with bv metadata from --robot-next
         fullTask.metadata = {
           ...fullTask.metadata,
-          bvScore: topRec.score,
-          bvReasons: topRec.reasons,
-          bvUnblocks: topRec.unblocks,
-          bvBreakdown: topRec.breakdown,
+          bvScore: nextOutput.score,
+          bvReasons: nextOutput.reasons,
+          bvUnblocks: nextOutput.unblocks,
         };
         return fullTask;
       }
 
-      // Fallback to recommendation data if bd show fails
-      return recommendationToTask(topRec);
+      // Fallback: construct task from --robot-next output
+      // (--robot-next doesn't include priority, default to P2)
+      return {
+        id: nextOutput.id,
+        title: nextOutput.title,
+        status: 'open' as TrackerTaskStatus,
+        priority: 2 as TaskPriority,
+        metadata: {
+          bvScore: nextOutput.score,
+          bvReasons: nextOutput.reasons,
+          bvUnblocks: nextOutput.unblocks,
+        },
+      };
     } catch (err) {
       console.error('Error in getNextTask:', err);
       return super.getNextTask(filter);
