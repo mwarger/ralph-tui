@@ -518,8 +518,9 @@ export abstract class BaseAgentPlugin implements AgentPlugin {
       ...options?.env,
     };
 
-    // Merge flags
-    const allArgs = [...this.defaultFlags, ...(options?.flags ?? []), ...args];
+    // Merge flags: engine-injected flags (options.flags) come last so they
+    // take precedence over agent-internal buildArgs() flags (last-flag-wins).
+    const allArgs = [...this.defaultFlags, ...args, ...(options?.flags ?? [])];
 
     // Debug: log the command being executed
     debugLog(`[AGENT] Spawning ${command} with args: ${JSON.stringify(allArgs.slice(0, 10))}... cwd=${options?.cwd}`);

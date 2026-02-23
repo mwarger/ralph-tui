@@ -30,6 +30,7 @@ import type {
   AgentDetectResult,
   AgentExecutionStatus,
   AgentExecutionHandle,
+  AgentExecutionResult,
 } from './types.js';
 
 /**
@@ -546,5 +547,250 @@ describe('BaseAgentPlugin envExclude (unit tests)', () => {
       expect(DEFAULT_ENV_EXCLUDE_PATTERNS).toContain('*_SECRET');
       expect(DEFAULT_ENV_EXCLUDE_PATTERNS.length).toBeGreaterThanOrEqual(3);
     });
+  });
+});
+
+/**
+ * Test agent for verifying flag ordering. Overrides execute() to replicate the
+ * exact flag-merge logic from BaseAgentPlugin.execute(), then spawns the process
+ * via Bun.spawn to avoid mock pollution from tests that mock node:child_process.
+ *
+ * The flag-merge contract being tested:
+ *   allArgs = [...defaultFlags, ...buildArgs(), ...(options.flags ?? [])]
+ */
+class FlagOrderTestPlugin extends BaseAgentPlugin {
+  private modelFromBuildArgs?: string;
+  private scriptPathForTest?: string;
+
+  readonly meta: AgentPluginMeta = {
+    id: 'flag-order-test',
+    name: 'Flag Order Test',
+    description: 'Test plugin for verifying flag ordering in execute()',
+    version: '1.0.0',
+    author: 'Test',
+    defaultCommand: 'echo',
+    supportsStreaming: true,
+    supportsInterrupt: true,
+    supportsFileContext: false,
+    supportsSubagentTracing: false,
+  };
+
+  setScriptPath(path: string): void {
+    this.scriptPathForTest = path;
+  }
+
+  setModel(model: string): void {
+    this.modelFromBuildArgs = model;
+  }
+
+  override async detect(): Promise<AgentDetectResult> {
+    return { available: true, version: '1.0.0' };
+  }
+
+  protected buildArgs(
+    _prompt: string,
+    _files?: AgentFileContext[],
+    _options?: AgentExecuteOptions
+  ): string[] {
+    const args: string[] = [];
+    if (this.modelFromBuildArgs) {
+      args.push('--model', this.modelFromBuildArgs);
+    }
+    return args;
+  }
+
+  /**
+   * Override execute to use Bun.spawn (avoids node:child_process mock pollution)
+   * while replicating the exact flag-merge logic from BaseAgentPlugin.execute().
+   */
+  override execute(
+    prompt: string,
+    files?: AgentFileContext[],
+    options?: AgentExecuteOptions
+  ): AgentExecutionHandle {
+    const executionId = 'flag-test-' + Date.now();
+    const command = this.scriptPathForTest ?? this.meta.defaultCommand;
+    const args = this.buildArgs(prompt, files, options);
+    const startedAt = new Date();
+
+    // Replicate the exact flag-merge logic from BaseAgentPlugin.execute():
+    // Engine-injected flags (options.flags) come last so they take precedence
+    const allArgs = [...this.defaultFlags, ...args, ...(options?.flags ?? [])];
+
+    let resolvePromise: (result: AgentExecutionResult) => void;
+    const promise = new Promise<AgentExecutionResult>((resolve) => {
+      resolvePromise = resolve;
+    });
+
+    const runExecution = async (): Promise<void> => {
+      try {
+        const proc = Bun.spawn([command, ...allArgs], {
+          cwd: options?.cwd ?? process.cwd(),
+          stdout: 'pipe',
+          stderr: 'pipe',
+        });
+
+        const decoder = new TextDecoder();
+        let stdout = '';
+
+        const reader = proc.stdout.getReader();
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          const text = decoder.decode(value);
+          stdout += text;
+          options?.onStdout?.(text);
+        }
+
+        const exitCode = await proc.exited;
+        const endedAt = new Date();
+
+        resolvePromise!({
+          executionId,
+          status: exitCode === 0 ? 'completed' : 'failed',
+          exitCode,
+          stdout,
+          stderr: '',
+          durationMs: endedAt.getTime() - startedAt.getTime(),
+          interrupted: false,
+          startedAt: startedAt.toISOString(),
+          endedAt: endedAt.toISOString(),
+        });
+      } catch (error) {
+        resolvePromise!({
+          executionId,
+          status: 'failed',
+          exitCode: undefined,
+          stdout: '',
+          stderr: error instanceof Error ? error.message : String(error),
+          durationMs: Date.now() - startedAt.getTime(),
+          interrupted: false,
+          startedAt: startedAt.toISOString(),
+          endedAt: new Date().toISOString(),
+        });
+      }
+    };
+
+    void runExecution();
+
+    return {
+      executionId,
+      promise,
+      interrupt: () => true,
+      isRunning: () => false,
+    };
+  }
+}
+
+/** Parse script output into an array of arguments (one per line) */
+function parseArgs(stdout: string): string[] {
+  return stdout.split('\n').filter((line) => line.length > 0);
+}
+
+describe('BaseAgentPlugin flag ordering', () => {
+  let agent: FlagOrderTestPlugin;
+  let scriptPath: string;
+  let tempDir: string;
+
+  beforeEach(async () => {
+    // Create a temp script that prints each positional argument on its own line.
+    tempDir = await mkdtemp(join(tmpdir(), 'ralph-flag-test-'));
+    scriptPath = join(tempDir, 'print-args.sh');
+    await writeFile(scriptPath, '#!/bin/sh\nfor arg; do printf "%s\\n" "$arg"; done\n', { mode: 0o755 });
+
+    agent = new FlagOrderTestPlugin();
+    await agent.initialize({});
+    agent.setScriptPath(scriptPath);
+  });
+
+  afterEach(async () => {
+    await agent.dispose();
+    await rm(tempDir, { recursive: true, force: true }).catch(() => {});
+  });
+
+  test('engine-injected flags come after buildArgs in the final argument list', async () => {
+    agent.setModel('agent-model');
+
+    let capturedStdout = '';
+    const handle = agent.execute('test prompt', [], {
+      flags: ['--model', 'engine-model'],
+      timeout: 10000,
+      onStdout: (text: string) => {
+        capturedStdout += text;
+      },
+    });
+
+    const result = await handle.promise;
+    expect(result.status).toBe('completed');
+
+    const args = parseArgs(capturedStdout);
+
+    const agentModelIdx = args.indexOf('agent-model');
+    const engineModelIdx = args.lastIndexOf('engine-model');
+
+    expect(agentModelIdx).toBeGreaterThan(-1);
+    expect(engineModelIdx).toBeGreaterThan(-1);
+    // Engine-injected --model must come AFTER buildArgs --model
+    expect(engineModelIdx).toBeGreaterThan(agentModelIdx);
+  });
+
+  test('defaultFlags come before buildArgs flags', async () => {
+    agent = new FlagOrderTestPlugin();
+    await agent.initialize({ defaultFlags: ['--default-flag'] });
+    agent.setScriptPath(scriptPath);
+    agent.setModel('agent-model');
+
+    let capturedStdout = '';
+    const handle = agent.execute('test prompt', [], {
+      timeout: 10000,
+      onStdout: (text: string) => {
+        capturedStdout += text;
+      },
+    });
+
+    const result = await handle.promise;
+    expect(result.status).toBe('completed');
+
+    const args = parseArgs(capturedStdout);
+
+    const defaultFlagIdx = args.indexOf('--default-flag');
+    const modelIdx = args.indexOf('agent-model');
+
+    expect(defaultFlagIdx).toBeGreaterThan(-1);
+    expect(modelIdx).toBeGreaterThan(-1);
+    expect(defaultFlagIdx).toBeLessThan(modelIdx);
+  });
+
+  test('full ordering is defaultFlags, buildArgs, engine flags', async () => {
+    agent = new FlagOrderTestPlugin();
+    await agent.initialize({ defaultFlags: ['--verbose'] });
+    agent.setScriptPath(scriptPath);
+    agent.setModel('agent-model');
+
+    let capturedStdout = '';
+    const handle = agent.execute('test prompt', [], {
+      flags: ['--model', 'engine-model'],
+      timeout: 10000,
+      onStdout: (text: string) => {
+        capturedStdout += text;
+      },
+    });
+
+    const result = await handle.promise;
+    expect(result.status).toBe('completed');
+
+    const args = parseArgs(capturedStdout);
+
+    const verboseIdx = args.indexOf('--verbose');
+    const agentModelIdx = args.indexOf('agent-model');
+    const engineModelIdx = args.lastIndexOf('engine-model');
+
+    expect(verboseIdx).toBeGreaterThan(-1);
+    expect(agentModelIdx).toBeGreaterThan(-1);
+    expect(engineModelIdx).toBeGreaterThan(-1);
+
+    // Order: defaultFlags < buildArgs < engine flags
+    expect(verboseIdx).toBeLessThan(agentModelIdx);
+    expect(agentModelIdx).toBeLessThan(engineModelIdx);
   });
 });
