@@ -2665,20 +2665,22 @@ export function RunApp({
     height - layout.header.height - layout.footer.height - dashboardHeight - tabBarHeight
   );
   const isCompact = width < 80;
+  const parallelSummaryOverlayWidth = Math.max(72, Math.min(width - 4, 140));
+  const parallelSummaryContentWidth = Math.max(20, parallelSummaryOverlayWidth - 4);
   const parallelSummaryOverlayLines = useMemo(() => {
     if (!parallelCompletionSummaryLines || parallelCompletionSummaryLines.length === 0) {
       return [];
     }
 
-    const maxLineWidth = Math.max(20, width - 12);
+    const maxLineWidth = parallelSummaryContentWidth;
     const truncateForOverlay = (line: string): string => {
       if (line.length <= maxLineWidth) {
-        return line;
+        return line.padEnd(maxLineWidth, ' ');
       }
       if (maxLineWidth <= 3) {
-        return line.slice(0, maxLineWidth);
+        return line.slice(0, maxLineWidth).padEnd(maxLineWidth, ' ');
       }
-      return `${line.slice(0, maxLineWidth - 3)}...`;
+      return `${line.slice(0, maxLineWidth - 3)}...`.padEnd(maxLineWidth, ' ');
     };
 
     const lines = [...parallelCompletionSummaryLines];
@@ -2695,7 +2697,7 @@ export function RunApp({
     parallelCompletionSummaryLines,
     parallelCompletionSummaryPath,
     parallelCompletionSummaryWriteError,
-    width,
+    parallelSummaryContentWidth,
   ]);
   const parallelSummaryMaxVisibleLines = Math.max(6, height - 14);
   const visibleParallelSummaryLines = parallelSummaryOverlayLines.slice(
@@ -3610,8 +3612,8 @@ export function RunApp({
         >
           <box
             style={{
-              width: Math.max(72, Math.min(width - 4, 140)),
-              height: Math.max(12, Math.min(height - 4, visibleParallelSummaryLines.length + 6)),
+              width: parallelSummaryOverlayWidth,
+              height: Math.max(12, Math.min(height - 4, visibleParallelSummaryLines.length + 4)),
               backgroundColor: colors.bg.secondary,
               border: true,
               borderColor: colors.status.info,
@@ -3619,12 +3621,12 @@ export function RunApp({
               padding: 1,
             }}
           >
-            <text fg={colors.status.info}>Parallel Run Summary</text>
-            <box style={{ height: 1 }} />
             {visibleParallelSummaryLines.map((line, index) => (
-              <text key={`parallel-summary-line-${index}`} fg={colors.fg.primary}>
-                {line}
-              </text>
+              <box key={`parallel-summary-line-${index}`} style={{ width: parallelSummaryContentWidth }}>
+                <text fg={colors.fg.primary}>
+                  {line}
+                </text>
+              </box>
             ))}
             <box style={{ height: 1 }} />
             <text fg={colors.fg.muted}>[Enter/Esc] Close  [q] Quit</text>

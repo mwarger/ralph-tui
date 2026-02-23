@@ -416,8 +416,10 @@ export function formatParallelRunSummary(summary: ParallelRunSummary): string {
     lines.push(
       `  Merge target:           ${summary.originalBranch ?? 'current branch (direct merge)'}`
     );
+    lines.push('  Changes location:       Current branch (direct merge mode)');
   } else if (summary.sessionBranch) {
     lines.push(`  Session branch:         ${summary.sessionBranch}`);
+    lines.push(`  Changes are on branch:  ${summary.sessionBranch}`);
   }
   if (summary.originalBranch) {
     lines.push(`  Original branch:        ${summary.originalBranch}`);
@@ -429,6 +431,18 @@ export function formatParallelRunSummary(summary: ParallelRunSummary): string {
   for (const info of summary.preservedRecoveryWorktrees) {
     lines.push(`    - ${info.branch} (${info.taskId})`);
     lines.push(`      ${info.path}`);
+  }
+  if (summary.status === 'completed') {
+    lines.push('');
+    lines.push('  Next steps:');
+    if (summary.directMerge) {
+      lines.push('    - Review and push your current branch changes.');
+    } else if (summary.sessionBranch && summary.originalBranch) {
+      lines.push(`    - Merge to ${summary.originalBranch}: git merge ${summary.sessionBranch}`);
+      lines.push(`    - Create PR: git push -u origin ${summary.sessionBranch}`);
+      lines.push(`    - Open PR: gh pr create --head ${summary.sessionBranch}`);
+      lines.push(`    - Discard session branch: git branch -D ${summary.sessionBranch}`);
+    }
   }
   lines.push('');
   lines.push('═══════════════════════════════════════════════════════════════');
