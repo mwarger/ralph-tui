@@ -644,6 +644,72 @@ describe('ParallelExecutor class', () => {
       expect(statusUpdates).toContainEqual({ taskId: 'A', status: 'open' });
     });
 
+    test('executeGroup retries a failed merge once and succeeds', async () => {
+      const tracker = createMockTracker();
+      const completedTaskIds: string[] = [];
+      tracker.completeTask = async (taskId) => {
+        completedTaskIds.push(taskId);
+        return { success: true, message: 'Task completed' };
+      };
+
+      const executor = new ParallelExecutor(createMockConfig(), tracker, {
+        maxRequeueCount: 1,
+      });
+      const taskA = task('A');
+      const group = { index: 0, tasks: [taskA], depth: 0 };
+      const events: ParallelEvent[] = [];
+      executor.on((event) => events.push(event));
+
+      let executeBatchCalls = 0;
+      let mergeCalls = 0;
+
+      (executor as any).taskGraph = createSingleGroupAnalysis(taskA);
+      (executor as any).executeBatch = async () => {
+        executeBatchCalls++;
+        return [createWorkerResult(taskA, { success: true, taskCompleted: true, commitCount: 1 })];
+      };
+      (executor as any).mergeProgressFile = async () => {};
+      (executor as any).mergeEngine = {
+        enqueue: () => {},
+        getQueue: () => [],
+        processNext: async () => {
+          mergeCalls++;
+          if (mergeCalls === 1) {
+            return {
+              operationId: 'op-1',
+              success: false,
+              strategy: 'merge-commit',
+              hadConflicts: false,
+              filesChanged: 0,
+              durationMs: 1,
+              error: 'merge failed',
+            };
+          }
+          return {
+            operationId: 'op-2',
+            success: true,
+            strategy: 'fast-forward',
+            hadConflicts: false,
+            filesChanged: 1,
+            durationMs: 1,
+          };
+        },
+      };
+
+      await (executor as any).executeGroup(group, 0);
+
+      expect(executeBatchCalls).toBe(2);
+      expect(completedTaskIds).toEqual(['A']);
+      const completedEvent = events.find((e) => e.type === 'parallel:group-completed');
+      expect(completedEvent?.type).toBe('parallel:group-completed');
+      if (completedEvent?.type === 'parallel:group-completed') {
+        expect(completedEvent.tasksCompleted).toBe(1);
+        expect(completedEvent.tasksFailed).toBe(0);
+        expect(completedEvent.mergesCompleted).toBe(1);
+        expect(completedEvent.mergesFailed).toBe(0);
+      }
+    });
+
     test('retryConflictResolution processes pending conflicts in FIFO order', async () => {
       const tracker = createMockTracker();
       const completedTaskIds: string[] = [];

@@ -511,23 +511,30 @@ export class ParallelExecutor {
       workerCount: Math.min(group.tasks.length, this.config.maxWorkers),
     });
 
-    // Split tasks into batches of maxWorkers
-    const batches = this.batchTasks(group.tasks);
+    // Process tasks in batches, allowing failed merges to be re-queued.
+    const pendingTasks = [...group.tasks];
     let groupTasksCompleted = 0;
     let groupTasksFailed = 0;
     let groupMergesCompleted = 0;
     let groupMergesFailed = 0;
 
-    for (const batch of batches) {
+    while (pendingTasks.length > 0) {
       if (this.shouldStop) break;
       await this.waitWhilePaused();
       if (this.shouldStop) break;
+
+      const [batch] = this.batchTasks(pendingTasks);
+      if (!batch || batch.length === 0) {
+        break;
+      }
+      pendingTasks.splice(0, batch.length);
 
       // Execute batch of workers in parallel
       const results = await this.executeBatch(batch);
 
       // Phase 1: Attempt all merges first, collect conflicts
       this.status = 'merging';
+      const retryTasks: TrackerTask[] = [];
       const pendingConflicts: Array<{
         operation: MergeOperation;
         workerResult: WorkerResult;
@@ -565,6 +572,7 @@ export class ParallelExecutor {
             }
             // Merge worker's progress.md into main so subsequent workers see learnings
             await this.mergeProgressFile(result);
+            this.requeueCounts.delete(result.task.id);
             groupTasksCompleted++;
             this.totalTasksCompleted++;
             groupMergesCompleted++;
@@ -578,18 +586,26 @@ export class ParallelExecutor {
             if (operation && this.config.aiConflictResolution) {
               pendingConflicts.push({ operation, workerResult: result });
             } else {
-              // AI conflict resolution disabled - mark as failed
+              // AI conflict resolution disabled - requeue/fail based on retry budget.
+              const requeued = await this.handleMergeFailure(result, operation);
+              if (requeued) {
+                retryTasks.push(result.task);
+              } else {
+                groupTasksFailed++;
+                this.totalTasksFailed++;
+                groupMergesFailed++;
+              }
+            }
+          } else {
+            // Merge failed (non-conflict) - requeue/fail based on retry budget.
+            const requeued = await this.handleMergeFailure(result);
+            if (requeued) {
+              retryTasks.push(result.task);
+            } else {
               groupTasksFailed++;
               this.totalTasksFailed++;
               groupMergesFailed++;
-              await this.handleMergeFailure(result);
             }
-          } else {
-            // Merge failed (non-conflict) - don't mark task as complete
-            groupTasksFailed++;
-            this.totalTasksFailed++;
-            groupMergesFailed++;
-            await this.handleMergeFailure(result);
           }
         } else {
           groupTasksFailed++;
@@ -651,6 +667,7 @@ export class ParallelExecutor {
             }
             // Merge worker's progress.md into main
             await this.mergeProgressFile(workerResult);
+            this.requeueCounts.delete(workerResult.task.id);
             this.totalConflictsResolved += resolutions.length;
             groupTasksCompleted++;
             this.totalTasksCompleted++;
@@ -659,13 +676,19 @@ export class ParallelExecutor {
           } else {
             // Conflict resolution failed - track for retry/skip
             this.enqueuePendingConflict(operation, workerResult);
-            groupTasksFailed++;
-            this.totalTasksFailed++;
-            groupMergesFailed++;
-            await this.handleMergeFailure(workerResult, operation);
+            const requeued = await this.handleMergeFailure(workerResult, operation);
+            if (requeued) {
+              retryTasks.push(workerResult.task);
+            } else {
+              groupTasksFailed++;
+              this.totalTasksFailed++;
+              groupMergesFailed++;
+            }
           }
         }
       }
+
+      this.enqueueRetryTasks(pendingTasks, retryTasks);
     }
 
     this.emitParallel({
@@ -781,11 +804,12 @@ export class ParallelExecutor {
   private async handleMergeFailure(
     result: WorkerResult,
     operation?: MergeOperation
-  ): Promise<void> {
+  ): Promise<boolean> {
     const taskId = result.task.id;
     const currentCount = this.requeueCounts.get(taskId) ?? 0;
+    const shouldRequeue = currentCount < this.config.maxRequeueCount;
 
-    if (currentCount < this.config.maxRequeueCount) {
+    if (shouldRequeue) {
       this.requeueCounts.set(taskId, currentCount + 1);
     }
 
@@ -796,7 +820,9 @@ export class ParallelExecutor {
       );
     }
 
+    await this.mergeProgressFile(result);
     await this.resetTaskToOpen(taskId);
+    return shouldRequeue;
   }
 
   /**
@@ -909,6 +935,24 @@ export class ParallelExecutor {
         conflictMarkers: '',
       })),
     });
+  }
+
+  private enqueueRetryTasks(
+    pendingTasks: TrackerTask[],
+    retryTasks: TrackerTask[]
+  ): void {
+    if (retryTasks.length === 0) {
+      return;
+    }
+
+    const existingTaskIds = new Set(pendingTasks.map((task) => task.id));
+    for (const task of retryTasks) {
+      if (existingTaskIds.has(task.id)) {
+        continue;
+      }
+      pendingTasks.push(task);
+      existingTaskIds.add(task.id);
+    }
   }
 
   private markConflictOperationRolledBack(
