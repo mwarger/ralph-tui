@@ -13,9 +13,9 @@
  * @returns -1 if a < b, 0 if a === b, 1 if a > b
  */
 export function compareSemverStrings(a: string, b: string): -1 | 0 | 1 {
-  // Strip any pre-release/build metadata (e.g., "2.0-beta" -> "2.0")
-  const cleanA = a.split(/[-+]/)[0];
-  const cleanB = b.split(/[-+]/)[0];
+  // Strip leading "v" prefix, then pre-release/build metadata (e.g., "v2.0-beta" -> "2.0")
+  const cleanA = a.replace(/^v/i, '').split(/[-+]/)[0];
+  const cleanB = b.replace(/^v/i, '').split(/[-+]/)[0];
 
   const partsA = cleanA.split('.').map((s) => parseInt(s, 10) || 0);
   const partsB = cleanB.split('.').map((s) => parseInt(s, 10) || 0);

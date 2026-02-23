@@ -41,4 +41,11 @@ describe('compareSemverStrings', () => {
     expect(compareSemverStrings('2.0+build123', '2.0')).toBe(0);
     expect(compareSemverStrings('2.0-alpha', '2.0-beta')).toBe(0);
   });
+
+  test('strips leading v prefix', () => {
+    expect(compareSemverStrings('v1.3.6', '1.3.6')).toBe(0);
+    expect(compareSemverStrings('V1.3.6', '1.3.6')).toBe(0);
+    expect(compareSemverStrings('v2.0.0', 'v1.9.0')).toBe(1);
+    expect(compareSemverStrings('v1.3.5', '1.3.6')).toBe(-1);
+  });
 });

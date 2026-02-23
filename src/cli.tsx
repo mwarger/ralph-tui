@@ -155,9 +155,7 @@ async function handleSubcommand(args: string[]): Promise<boolean> {
 
   // Version command
   if (command === 'version' || command === '--version' || command === '-v') {
-    // Dynamic import to get version from package.json
-    const pkg = await import('../package.json', { with: { type: 'json' } });
-    console.log(`ralph-tui ${pkg.default.version}`);
+    console.log(`ralph-tui ${pkg.version}`);
     return true;
   }
 
