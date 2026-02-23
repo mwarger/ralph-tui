@@ -1247,6 +1247,11 @@ function RunAppWrapper({
   const handleSaveSettings = async (newConfig: StoredConfig): Promise<void> => {
     await saveProjectConfig(newConfig, cwd);
     setStoredConfig(newConfig);
+
+    // Propagate runtime-updateable settings to the engine
+    if (engine && newConfig.autoCommit !== undefined) {
+      engine.setAutoCommit(newConfig.autoCommit);
+    }
   };
 
   // Handle loading available epics (engine absent in parallel mode)
