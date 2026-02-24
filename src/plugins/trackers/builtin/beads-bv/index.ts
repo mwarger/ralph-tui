@@ -363,7 +363,7 @@ export class BeadsBvTrackerPlugin extends BeadsTrackerPlugin {
           (status) => status === 'open' || status === 'in_progress'
         )
       ) {
-        return undefined;
+        return super.getNextTask(filter);
       }
 
       // Use --robot-next for task selection: guaranteed to return only
@@ -424,7 +424,7 @@ export class BeadsBvTrackerPlugin extends BeadsTrackerPlugin {
       const fullTask = await this.getTask(nextOutput.id);
       if (fullTask) {
         if (statusFilter && !statusFilter.includes(fullTask.status)) {
-          return undefined;
+          return super.getNextTask(filter);
         }
 
         // Augment with bv metadata from --robot-next
@@ -441,7 +441,7 @@ export class BeadsBvTrackerPlugin extends BeadsTrackerPlugin {
       }
 
       if (statusFilter && !statusFilter.includes('open')) {
-        return undefined;
+        return super.getNextTask(filter);
       }
 
       // Fallback: construct task from --robot-next output
