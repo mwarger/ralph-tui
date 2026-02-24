@@ -465,6 +465,37 @@ describe('BeadsBvTrackerPlugin', () => {
     });
   });
 
+  describe('getTasks ordering', () => {
+    test('applies shared dotted child numeric ordering through parent beads tracker', async () => {
+      const plugin = new BeadsBvTrackerPlugin();
+
+      queueSpawnResponse({
+        command: 'bd',
+        stdout: JSON.stringify([
+          { id: 'epic-5.12', title: 'Child 12', status: 'open', priority: 2 },
+          { id: 'task-alpha', title: 'Non-child A', status: 'open', priority: 2 },
+          { id: 'epic-5.2', title: 'Child 2', status: 'open', priority: 2 },
+          { id: 'thing.xyz', title: 'Dotted non-numeric', status: 'open', priority: 2 },
+          { id: 'epic-5.1', title: 'Child 1', status: 'open', priority: 2 },
+          { id: 'task-beta', title: 'Non-child B', status: 'open', priority: 2 },
+          { id: 'epic-5.9', title: 'Child 9', status: 'open', priority: 2 },
+        ]),
+      });
+
+      const tasks = await plugin.getTasks();
+
+      expect(tasks.map((t) => t.id)).toEqual([
+        'epic-5.1',
+        'task-alpha',
+        'epic-5.2',
+        'thing.xyz',
+        'epic-5.9',
+        'task-beta',
+        'epic-5.12',
+      ]);
+    });
+  });
+
   describe('scheduleTriageRefresh', () => {
     test('queues a forced refresh while a refresh is already in-flight', async () => {
       const plugin = new BeadsBvTrackerPlugin();
