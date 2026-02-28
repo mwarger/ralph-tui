@@ -450,6 +450,64 @@ export async function mergeSessionWorktree(
 }
 
 /**
+ * Copy iteration logs from a session worktree to the main project.
+ * This preserves logs so they can be reviewed after the worktree is removed
+ * or when the session ends in a failed/incomplete state.
+ * Best-effort — does not throw on failure.
+ *
+ * @param mainCwd - The main project working directory (NOT the worktree)
+ * @param worktreePath - Absolute path to the session worktree
+ */
+export function preserveIterationLogs(mainCwd: string, worktreePath: string): void {
+  const worktreeLogsDir = path.join(worktreePath, '.ralph-tui', 'iterations');
+  const mainLogsDir = path.join(mainCwd, '.ralph-tui', 'iterations');
+
+  if (!fs.existsSync(worktreeLogsDir)) {
+    return;
+  }
+
+  try {
+    fs.mkdirSync(mainLogsDir, { recursive: true });
+
+    const logFiles = fs.readdirSync(worktreeLogsDir);
+    for (const file of logFiles) {
+      if (file.endsWith('.log')) {
+        const srcPath = path.join(worktreeLogsDir, file);
+        const destPath = path.join(mainLogsDir, file);
+
+        // Don't overwrite if destination exists
+        if (!fs.existsSync(destPath)) {
+          fs.copyFileSync(srcPath, destPath);
+        }
+      }
+    }
+  } catch {
+    // Best effort — don't fail if log preservation fails
+  }
+}
+
+/**
+ * Print a message telling the user their session worktree was preserved
+ * and how to manually merge or clean it up.
+ */
+export function printWorktreePreservedMessage(
+  worktreePath: string,
+  branchName: string,
+  reason: string,
+): void {
+  console.log('');
+  console.log(`Session worktree preserved (${reason}).`);
+  console.log(`  Worktree: ${worktreePath}`);
+  console.log(`  Branch:   ${branchName}`);
+  console.log('');
+  console.log('To manually merge the work:');
+  console.log(`  git merge ${branchName}`);
+  console.log('');
+  console.log('To clean up when done:');
+  console.log(`  git worktree remove ${worktreePath}`);
+}
+
+/**
  * Remove a session worktree and its branch.
  * Best-effort cleanup — does not throw on failure.
  */

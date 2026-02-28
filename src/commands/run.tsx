@@ -87,7 +87,7 @@ import { basename, join } from 'node:path';
 import { getEnvExclusionReport, formatEnvExclusionReport } from '../plugins/agents/base.js';
 import { writeFileAtomic } from '../session/atomic-write.js';
 import { formatDuration } from '../utils/logger.js';
-import { createSessionWorktree, copyTrackerData, deriveSessionName, mergeSessionWorktree } from '../session-worktree.js';
+import { createSessionWorktree, copyTrackerData, deriveSessionName, mergeSessionWorktree, preserveIterationLogs, printWorktreePreservedMessage } from '../session-worktree.js';
 import type { SessionWorktreeResult } from '../session-worktree.js';
 
 type PersistState = (state: PersistedSessionState) => void | Promise<void>;
@@ -3977,6 +3977,17 @@ export async function executeRunCommand(args: string[]): Promise<void> {
     await savePersistedSession(persistedState);
     // Update registry status to failed
     await updateRegistryStatus(session.id, 'failed');
+
+    // Preserve session worktree on failure so user can inspect/recover
+    if (sessionWorktreeInfo) {
+      preserveIterationLogs(cwd, sessionWorktreeInfo.worktreePath);
+      printWorktreePreservedMessage(
+        sessionWorktreeInfo.worktreePath,
+        sessionWorktreeInfo.branchName,
+        'session failed',
+      );
+    }
+
     await endSession(config.cwd, 'failed');
     await releaseLockNew(config.cwd);
     cleanupLockHandlers();
@@ -4021,6 +4032,16 @@ export async function executeRunCommand(args: string[]): Promise<void> {
     // Update registry with current status
     await updateRegistryStatus(session.id, persistedState.status);
     console.log('\nSession state saved. Use "ralph-tui resume" to continue.');
+
+    // Preserve session worktree on incomplete session so user can inspect/recover
+    if (sessionWorktreeInfo) {
+      preserveIterationLogs(cwd, sessionWorktreeInfo.worktreePath);
+      printWorktreePreservedMessage(
+        sessionWorktreeInfo.worktreePath,
+        sessionWorktreeInfo.branchName,
+        'session incomplete',
+      );
+    }
   }
 
   if (!useParallel) {
