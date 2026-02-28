@@ -8,6 +8,7 @@
 import { execFileSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { sanitizeBranchName } from './parallel/worktree-manager.js';
 
 /** Result of session worktree creation */
 export interface SessionWorktreeResult {
@@ -36,53 +37,19 @@ export function deriveSessionName(options: {
   sessionId: string;
 }): string {
   if (options.customName) {
-    return sanitizeBranchSegment(options.customName);
+    return sanitizeBranchName(options.customName);
   }
   if (options.epicId) {
-    return sanitizeBranchSegment(options.epicId);
+    return sanitizeBranchName(options.epicId);
   }
   if (options.prdPath) {
     const basename = path.basename(options.prdPath, path.extname(options.prdPath));
-    return sanitizeBranchSegment(basename);
+    return sanitizeBranchName(basename);
   }
   // Fallback: first 8 chars of session UUID
   return options.sessionId.slice(0, 8);
 }
 
-/**
- * Sanitize a string into a valid git branch name segment.
- * Removes/replaces invalid characters.
- */
-function sanitizeBranchSegment(input: string): string {
-  let sanitized = input;
-
-  // Replace spaces and invalid characters with dashes
-  sanitized = sanitized.replace(/[\s~^:?*\[\\@{]/g, '-');
-
-  // Remove control characters
-  sanitized = sanitized.replace(/\p{Cc}/gu, '');
-
-  // Collapse multiple slashes and dashes
-  sanitized = sanitized.replace(/\/+/g, '/').replace(/-+/g, '-');
-
-  // Remove consecutive dots
-  sanitized = sanitized.replace(/\.{2,}/g, '.');
-
-  // Strip leading/trailing slashes, dots, and dashes
-  sanitized = sanitized.replace(/^[./-]+|[./-]+$/g, '');
-
-  // Don't end with .lock
-  if (sanitized.endsWith('.lock')) {
-    sanitized = sanitized.slice(0, -5);
-  }
-
-  // If sanitization resulted in empty string, use a hash fallback
-  if (!sanitized) {
-    sanitized = Buffer.from(input).toString('base64').replace(/[^a-zA-Z0-9]/g, '').slice(0, 8) || 'session';
-  }
-
-  return sanitized;
-}
 
 /**
  * Compute the worktree base directory as a sibling of the project.

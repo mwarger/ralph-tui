@@ -22,7 +22,7 @@ export interface CleanupAllOptions {
  * Sanitize a task ID into a valid git branch name.
  * Removes/replaces invalid characters and ensures the result is safe for git.
  */
-function sanitizeBranchName(taskId: string): string {
+export function sanitizeBranchName(taskId: string): string {
   let sanitized = taskId;
 
   // Replace spaces and invalid characters with dashes
