@@ -228,6 +228,9 @@ export interface RuntimeOptions {
 
   /** Enable parallel execution, optionally with worker count (--parallel [N]) */
   parallel?: number | boolean;
+
+  /** Run in an isolated git worktree. true = auto-generated name, string = explicit branch/dir name */
+  worktree?: boolean | string;
 }
 
 /**
@@ -342,6 +345,9 @@ export interface StoredConfig {
 
   /** Conflict resolution configuration for parallel execution */
   conflictResolution?: ConflictResolutionConfig;
+
+  /** Run in an isolated git worktree. true = auto-generated name, string = explicit branch/dir name */
+  worktree?: boolean | string;
 }
 
 /**

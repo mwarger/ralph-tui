@@ -886,6 +886,17 @@ export function parseRunArgs(args: string[]): ExtendedRuntimeOptions {
         }
         break;
 
+      case '--worktree': {
+        // --worktree or --worktree <name>
+        if (nextArg && !nextArg.startsWith('-')) {
+          options.worktree = nextArg;
+          i++;
+        } else {
+          options.worktree = true;
+        }
+        break;
+      }
+
       case '--task-range':
         // Allow nextArg if it exists and either doesn't start with '-' OR matches a negative-integer pattern (e.g., "-10")
         if (nextArg && (!nextArg.startsWith('-') || /^-\d+$/.test(nextArg))) {
@@ -968,6 +979,7 @@ Options:
   --parallel [N]      Force parallel execution with optional max workers (default workers: 3)
   --direct-merge      Merge directly to current branch (skip session branch creation)
   --target-branch <name> Create/use explicit session branch name for parallel mode
+  --worktree [name]   Run in an isolated git worktree (auto-generates name if omitted)
   --task-range <range> Filter tasks by index (e.g., 1-5, 3-, -10)
   --listen            Enable remote listener (implies --headless)
   --listen-port <n>   Port for remote listener (default: 7890)
