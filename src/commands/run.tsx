@@ -87,7 +87,7 @@ import { basename, join } from 'node:path';
 import { getEnvExclusionReport, formatEnvExclusionReport } from '../plugins/agents/base.js';
 import { writeFileAtomic } from '../session/atomic-write.js';
 import { formatDuration } from '../utils/logger.js';
-import { createSessionWorktree, deriveSessionName } from '../session-worktree.js';
+import { createSessionWorktree, copyTrackerData, deriveSessionName } from '../session-worktree.js';
 
 type PersistState = (state: PersistedSessionState) => void | Promise<void>;
 
@@ -3330,6 +3330,9 @@ export async function executeRunCommand(args: string[]): Promise<void> {
 
     try {
       const result = await createSessionWorktree(cwd, sessionName);
+
+      // Copy tracker data into the worktree before engine initialization
+      copyTrackerData(cwd, result.worktreePath, config.tracker.plugin, config.prdPath);
 
       // Redirect the execution engine to run inside the worktree
       config.cwd = result.worktreePath;

@@ -123,6 +123,119 @@ function copyConfig(cwd: string, worktreePath: string): void {
   }
 }
 
+/** Files/patterns to exclude when copying .beads/ directory */
+const BEADS_EXCLUDE_PATTERNS = [
+  /\.db$/,
+  /\.db-shm$/,
+  /\.db-wal$/,
+  /\.lock$/,
+  /\.tmp$/,
+  /^last-touched$/,
+];
+
+/**
+ * Check if a filename matches any of the beads exclusion patterns.
+ */
+function isBeadsExcluded(filename: string): boolean {
+  return BEADS_EXCLUDE_PATTERNS.some((pattern) => pattern.test(filename));
+}
+
+/**
+ * Copy the .beads/ directory from source to target, excluding git-ignored files
+ * (database files, lock files, temporary files).
+ */
+function copyBeadsDir(cwd: string, worktreePath: string): void {
+  const sourceDir = path.join(cwd, '.beads');
+  const targetDir = path.join(worktreePath, '.beads');
+
+  if (!fs.existsSync(sourceDir)) {
+    return;
+  }
+
+  fs.mkdirSync(targetDir, { recursive: true });
+
+  const entries = fs.readdirSync(sourceDir);
+  for (const entry of entries) {
+    if (isBeadsExcluded(entry)) {
+      continue;
+    }
+
+    const sourcePath = path.join(sourceDir, entry);
+    const targetPath = path.join(targetDir, entry);
+    const stat = fs.statSync(sourcePath);
+
+    if (stat.isFile()) {
+      fs.copyFileSync(sourcePath, targetPath);
+    } else if (stat.isDirectory()) {
+      // Recursively copy subdirectories (unlikely for .beads/ but handle gracefully)
+      fs.cpSync(sourcePath, targetPath, { recursive: true });
+    }
+  }
+}
+
+/**
+ * Run `br sync --flush-only` or `bd sync --flush-only` in the main repo to
+ * ensure the JSONL export is up to date with the SQLite database.
+ * Returns true on success, false on failure (caller should log warning).
+ */
+function syncBeadsTracker(cwd: string, command: string): boolean {
+  try {
+    execFileSync(command, ['sync', '--flush-only'], {
+      cwd,
+      encoding: 'utf-8',
+      timeout: 30000,
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Copy tracker data files from the main repo into the worktree.
+ *
+ * Handles three tracker types:
+ * - beads-rust: runs `br sync --flush-only`, then copies .beads/ (excluding db/lock/tmp files)
+ * - beads / beads-bv: runs `bd sync --flush-only`, then copies .beads/ (excluding db/lock/tmp files)
+ * - json: copies the prd.json file (or configured PRD path) if it exists
+ *
+ * @param cwd - The main project working directory
+ * @param worktreePath - The worktree path to copy into
+ * @param trackerPlugin - The tracker plugin ID (e.g., 'beads-rust', 'beads', 'json')
+ * @param prdPath - Optional PRD file path for json tracker
+ */
+export function copyTrackerData(
+  cwd: string,
+  worktreePath: string,
+  trackerPlugin: string,
+  prdPath?: string,
+): void {
+  if (trackerPlugin === 'beads-rust') {
+    // Sync DB to JSONL before copying
+    if (!syncBeadsTracker(cwd, 'br')) {
+      console.warn('Warning: br sync --flush-only failed; worktree will use existing .beads/ from HEAD');
+    }
+    copyBeadsDir(cwd, worktreePath);
+  } else if (trackerPlugin === 'beads' || trackerPlugin === 'beads-bv') {
+    // Sync DB to JSONL before copying
+    if (!syncBeadsTracker(cwd, 'bd')) {
+      console.warn('Warning: bd sync --flush-only failed; worktree will use existing .beads/ from HEAD');
+    }
+    copyBeadsDir(cwd, worktreePath);
+  } else if (trackerPlugin === 'json') {
+    // Copy the PRD JSON file
+    const prdFile = prdPath || 'prd.json';
+    const sourcePrd = path.resolve(cwd, prdFile);
+    if (fs.existsSync(sourcePrd)) {
+      const targetPrd = path.join(worktreePath, path.relative(cwd, sourcePrd));
+      const targetPrdDir = path.dirname(targetPrd);
+      fs.mkdirSync(targetPrdDir, { recursive: true });
+      fs.copyFileSync(sourcePrd, targetPrd);
+    }
+  }
+}
+
 /**
  * Check if there is enough disk space to create a worktree.
  * Uses fs.statfs first, falls back to `df` for APFS and similar.
