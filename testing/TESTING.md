@@ -329,6 +329,81 @@ bun run dev -- run --prd ~/.cache/ralph-tui/test-workspace/test-conflict-prd.jso
   --parallel 3
 ```
 
+## Session Worktree Testing
+
+The `--worktree` flag runs all task execution in an isolated git worktree, keeping your main branch clean until all tasks succeed.
+
+### Basic Worktree Creation
+
+```bash
+# Run with auto-generated worktree name (derived from epic ID, PRD filename, or session ID)
+bun run dev -- run --prd ~/.cache/ralph-tui/test-workspace/test-prd.json \
+  --cwd ~/.cache/ralph-tui/test-workspace \
+  --worktree
+
+# Run with explicit worktree name
+bun run dev -- run --prd ~/.cache/ralph-tui/test-workspace/test-prd.json \
+  --cwd ~/.cache/ralph-tui/test-workspace \
+  --worktree my-test-feature
+```
+
+**Verify:**
+- A sibling directory is created under `.ralph-worktrees/` (e.g., `~/.cache/ralph-tui/.ralph-worktrees/test-workspace/`)
+- A branch named `ralph-session/<name>` is created
+- Execution happens inside the worktree, not the main repo
+
+### Tracker Data Availability
+
+When running with `--worktree`, tracker data (beads DB or PRD file) must be available inside the worktree.
+
+**Verify:**
+- For PRD tracker: the PRD file is copied into the worktree at the same relative path
+- For beads tracker: the `.beads/` directory is copied (excluding `*.db`, `*.lock`, `*.tmp` files)
+- Task selection and completion detection work correctly inside the worktree
+
+### Auto-Merge on Success
+
+When all tasks complete successfully, the session worktree is automatically merged back to the original branch and cleaned up.
+
+```bash
+# Run a short test with --iterations to limit scope
+bun run dev -- run --prd ~/.cache/ralph-tui/test-workspace/test-prd.json \
+  --cwd ~/.cache/ralph-tui/test-workspace \
+  --worktree --iterations 5
+```
+
+**Verify:**
+- On completion: changes are merged back to the original branch (fast-forward or merge commit)
+- The worktree directory is removed after successful merge
+- The `ralph-session/<name>` branch is deleted after cleanup
+- Iteration logs are preserved in the main project's `.ralph-tui/iterations/` directory
+
+### Preservation on Failure
+
+When execution fails or is interrupted, the worktree and branch are preserved for manual inspection or resumption.
+
+**Verify:**
+- On error/crash: the worktree directory remains intact with all changes
+- On incomplete session (max iterations reached): worktree is preserved
+- A message is printed with the worktree path, branch name, and manual merge/cleanup commands
+- Iteration logs are copied back to the main project before preservation
+
+### Composition with --parallel
+
+The `--worktree` flag composes with `--parallel` — parallel workers run inside the session worktree context.
+
+```bash
+bun run dev -- run --prd ~/.cache/ralph-tui/test-workspace/test-prd.json \
+  --cwd ~/.cache/ralph-tui/test-workspace \
+  --worktree --parallel 3
+```
+
+**Verify:**
+- Parallel workers create their own sub-worktrees as siblings of the session worktree
+- Workers merge directly into the session branch (`ralph-session/<name>`)
+- After all tasks complete, the session worktree merges back to the original branch
+- On failure, the session worktree (with any merged parallel work) is preserved
+
 ## Contributing
 
 When adding new test scenarios:

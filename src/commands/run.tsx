@@ -981,7 +981,7 @@ Options:
   --parallel [N]      Force parallel execution with optional max workers (default workers: 3)
   --direct-merge      Merge directly to current branch (skip session branch creation)
   --target-branch <name> Create/use explicit session branch name for parallel mode
-  --worktree [name]   Run in an isolated git worktree (auto-generates name if omitted)
+  --worktree [name]   Run in an isolated git worktree (auto-merges on success)
   --task-range <range> Filter tasks by index (e.g., 1-5, 3-, -10)
   --listen            Enable remote listener (implies --headless)
   --listen-port <n>   Port for remote listener (default: 7890)
