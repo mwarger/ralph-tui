@@ -87,7 +87,8 @@ import { basename, join } from 'node:path';
 import { getEnvExclusionReport, formatEnvExclusionReport } from '../plugins/agents/base.js';
 import { writeFileAtomic } from '../session/atomic-write.js';
 import { formatDuration } from '../utils/logger.js';
-import { createSessionWorktree, copyTrackerData, deriveSessionName } from '../session-worktree.js';
+import { createSessionWorktree, copyTrackerData, deriveSessionName, mergeSessionWorktree } from '../session-worktree.js';
+import type { SessionWorktreeResult } from '../session-worktree.js';
 
 type PersistState = (state: PersistedSessionState) => void | Promise<void>;
 
@@ -3319,6 +3320,7 @@ export async function executeRunCommand(args: string[]): Promise<void> {
 
   // Create session worktree if --worktree is active (CLI flag or config)
   const worktreeOption = options.worktree ?? storedConfig?.worktree;
+  let sessionWorktreeInfo: SessionWorktreeResult | null = null;
 
   if (worktreeOption) {
     const sessionName = deriveSessionName({
@@ -3330,6 +3332,8 @@ export async function executeRunCommand(args: string[]): Promise<void> {
 
     try {
       const result = await createSessionWorktree(cwd, sessionName);
+
+      sessionWorktreeInfo = result;
 
       // Copy tracker data into the worktree before engine initialization
       copyTrackerData(cwd, result.worktreePath, config.tracker.plugin, config.prdPath);
@@ -3996,6 +4000,21 @@ export async function executeRunCommand(args: string[]): Promise<void> {
     // Remove from registry on completion
     await unregisterSession(session.id);
     console.log('\nSession completed successfully. Session file cleaned up.');
+
+    // Auto-merge session worktree back to original branch on successful completion
+    if (sessionWorktreeInfo) {
+      const mergeResult = await mergeSessionWorktree(
+        cwd,
+        sessionWorktreeInfo.worktreePath,
+        sessionWorktreeInfo.branchName,
+      );
+      if (mergeResult.success) {
+        console.log(mergeResult.message);
+      } else {
+        console.log('');
+        console.log(mergeResult.message);
+      }
+    }
   } else {
     // Save current state (session remains resumable)
     await savePersistedSession(persistedState);

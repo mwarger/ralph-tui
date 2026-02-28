@@ -362,6 +362,93 @@ export async function createSessionWorktree(
   return { worktreePath, branchName };
 }
 
+/** Result of merging a session worktree back to the original branch */
+export interface MergeResult {
+  /** Whether the merge was successful */
+  success: boolean;
+  /** Human-readable message describing what happened */
+  message: string;
+}
+
+/**
+ * Merge the session worktree branch back into the original branch.
+ *
+ * On success: switches to the original branch, merges (ff or commit),
+ * removes the worktree directory, and deletes the session branch.
+ *
+ * On failure (conflicts): preserves the worktree and branch so the user
+ * can resolve manually.
+ *
+ * @param cwd - The main project working directory (NOT the worktree)
+ * @param worktreePath - Absolute path to the session worktree
+ * @param branchName - The session branch name (e.g., "ralph-session/my-feature")
+ * @returns MergeResult indicating success/failure with a message
+ */
+export async function mergeSessionWorktree(
+  cwd: string,
+  worktreePath: string,
+  branchName: string,
+): Promise<MergeResult> {
+  // Determine the original branch to switch back to
+  let originalBranch: string;
+  try {
+    // HEAD of the main repo should still be on the original branch
+    originalBranch = git(cwd, ['rev-parse', '--abbrev-ref', 'HEAD']).trim();
+  } catch {
+    return {
+      success: false,
+      message: `Failed to determine original branch. Worktree preserved at: ${worktreePath} (branch: ${branchName})`,
+    };
+  }
+
+  // If the original branch IS the session branch (shouldn't happen, but guard), bail
+  if (originalBranch === branchName) {
+    return {
+      success: false,
+      message: `Original branch is the session branch (${branchName}). Worktree preserved at: ${worktreePath}`,
+    };
+  }
+
+  // Try fast-forward merge first
+  try {
+    git(cwd, ['merge', '--ff-only', branchName]);
+    console.log(`Merged ${branchName} into ${originalBranch} (fast-forward)`);
+  } catch {
+    // Fast-forward not possible, try regular merge
+    try {
+      git(cwd, ['merge', '--no-edit', branchName]);
+      console.log(`Merged ${branchName} into ${originalBranch} (merge commit)`);
+    } catch {
+      // Merge failed — abort and preserve worktree
+      try {
+        git(cwd, ['merge', '--abort']);
+      } catch {
+        // merge --abort may fail if no merge in progress
+      }
+
+      return {
+        success: false,
+        message: [
+          'Auto-merge failed due to conflicts.',
+          `  Worktree: ${worktreePath}`,
+          `  Branch:   ${branchName}`,
+          'Resolve manually with:',
+          `  cd ${cwd}`,
+          `  git merge ${branchName}`,
+        ].join('\n'),
+      };
+    }
+  }
+
+  // Merge succeeded — clean up worktree and branch
+  await removeSessionWorktree(cwd, worktreePath, branchName);
+
+  return {
+    success: true,
+    message: `Successfully merged ${branchName} into ${originalBranch}`,
+  };
+}
+
 /**
  * Remove a session worktree and its branch.
  * Best-effort cleanup — does not throw on failure.
