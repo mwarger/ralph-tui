@@ -87,6 +87,7 @@ import { basename, join } from 'node:path';
 import { getEnvExclusionReport, formatEnvExclusionReport } from '../plugins/agents/base.js';
 import { writeFileAtomic } from '../session/atomic-write.js';
 import { formatDuration } from '../utils/logger.js';
+import { createSessionWorktree, deriveSessionName } from '../session-worktree.js';
 
 type PersistState = (state: PersistedSessionState) => void | Promise<void>;
 
@@ -3315,6 +3316,37 @@ export async function executeRunCommand(args: string[]): Promise<void> {
 
   // Set session ID on config for use in iteration log filenames
   config.sessionId = session.id;
+
+  // Create session worktree if --worktree is active (CLI flag or config)
+  const worktreeOption = options.worktree ?? storedConfig?.worktree;
+
+  if (worktreeOption) {
+    const sessionName = deriveSessionName({
+      customName: typeof worktreeOption === 'string' ? worktreeOption : undefined,
+      epicId: config.epicId,
+      prdPath: config.prdPath,
+      sessionId: session.id,
+    });
+
+    try {
+      const result = await createSessionWorktree(cwd, sessionName);
+
+      // Redirect the execution engine to run inside the worktree
+      config.cwd = result.worktreePath;
+
+      console.log(`Worktree: ${result.worktreePath}`);
+      console.log(`Branch: ${result.branchName}`);
+    } catch (error) {
+      console.error(
+        'Failed to create session worktree:',
+        error instanceof Error ? error.message : error
+      );
+      await endSession(cwd, 'failed');
+      await releaseLockNew(cwd);
+      cleanupLockHandlers();
+      process.exit(1);
+    }
+  }
 
   console.log(`Session: ${session.id}`);
   console.log(`Agent: ${config.agent.plugin}`);
