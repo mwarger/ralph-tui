@@ -83,7 +83,7 @@ import {
 import { initializeTheme } from '../tui/theme.js';
 import type { ConnectionToastMessage } from '../tui/components/Toast.js';
 import { spawnSync } from 'node:child_process';
-import { basename, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { getEnvExclusionReport, formatEnvExclusionReport } from '../plugins/agents/base.js';
 import { writeFileAtomic } from '../session/atomic-write.js';
 import { formatDuration } from '../utils/logger.js';
@@ -3644,12 +3644,24 @@ export async function executeRunCommand(args: string[]): Promise<void> {
         }
       }
 
-      // Resolve directMerge: CLI flag takes precedence over config
-      const directMerge = options.directMerge ?? storedConfig?.parallel?.directMerge ?? false;
-      const targetBranch = options.targetBranch ?? storedConfig?.parallel?.targetBranch;
+      // Resolve directMerge: CLI flag takes precedence over config.
+      // When running inside a session worktree, force directMerge so parallel
+      // workers merge into the session branch (which later merges to original).
+      const directMerge = sessionWorktreeInfo
+        ? true
+        : (options.directMerge ?? storedConfig?.parallel?.directMerge ?? false);
+      const targetBranch = sessionWorktreeInfo
+        ? undefined
+        : (options.targetBranch ?? storedConfig?.parallel?.targetBranch);
       if (directMerge && targetBranch) {
         throw new Error('--target-branch cannot be used together with --direct-merge.');
       }
+
+      // When inside a session worktree, place parallel worker worktrees as
+      // siblings of the session worktree directory (same .ralph-worktrees/ parent).
+      const parallelWorktreeDir = sessionWorktreeInfo
+        ? dirname(sessionWorktreeInfo.worktreePath)
+        : storedConfig?.parallel?.worktreeDir;
 
       // Get filtered task IDs for ParallelExecutor (if --task-range was used)
       const filteredTaskIds = options.taskRange
@@ -3658,7 +3670,7 @@ export async function executeRunCommand(args: string[]): Promise<void> {
 
       const parallelExecutor = new ParallelExecutor(config, tracker, {
         maxWorkers,
-        worktreeDir: storedConfig?.parallel?.worktreeDir,
+        worktreeDir: parallelWorktreeDir,
         directMerge,
         sessionBranchName: targetBranch,
         filteredTaskIds,
