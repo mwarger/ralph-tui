@@ -38,6 +38,7 @@ Running `ralph-tui` without any command also starts the TUI interface, allowing 
 |--------|-------------|
 | `--iterations <n>` | Maximum iterations (0 = unlimited) |
 | `--delay <ms>` | Delay between iterations in milliseconds |
+| `--worktree [name]` | Run in isolated session worktree (auto-merge on success) |
 | `--serial`, `--sequential` | Force sequential execution (disable parallel) |
 | `--parallel [N]` | Force parallel execution, optionally with N workers |
 | `--task-range <range>` | Filter tasks by index (e.g., `1-5`, `3-`, `-10`) |
@@ -137,6 +138,9 @@ ralph-tui run --prd ./prd.json --prompt ./my-template.hbs
 ```bash
 # Run without TUI for automation
 ralph-tui run --prd ./prd.json --headless --iterations 10
+
+# Run headless in isolated worktree
+ralph-tui run --prd ./prd.json --headless --worktree
 ```
 
 ### Development Workflow

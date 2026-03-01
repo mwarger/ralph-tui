@@ -71,6 +71,7 @@ Ralph selects the highest-priority task, builds a prompt, executes your AI agent
 - **Session Persistence**: Pause anytime, resume later, survive crashes
 - **Real-time TUI**: Watch agent output, control execution with keyboard shortcuts
 - **Subagent Tracing**: See nested agent calls in real-time
+- **Session Worktrees**: Run tasks in an isolated git worktree that auto-merges on success and preserves on failure
 - **Cross-iteration Context**: Automatic progress tracking between tasks
 - **Flexible Skills**: Use PRD/task skills directly in your agent or via the TUI
 - **Remote Instances**: Monitor and control ralph-tui running on multiple machines from a single TUI
@@ -119,6 +120,12 @@ ralph-tui run --sandbox
 
 # Use a bundled color theme by name
 ralph-tui run --theme dracula
+
+# Run in an isolated git worktree (auto-merges on success)
+ralph-tui run --epic abc-123 --worktree
+
+# Run in a named worktree with a PRD file
+ralph-tui run --worktree my-feature --prd ./prd.json
 ```
 
 ### Create PRD Options
