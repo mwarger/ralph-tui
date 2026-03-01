@@ -24,6 +24,7 @@ These control basic execution behavior.
 | `iterationDelay` | number | `1000` | Delay between iterations in milliseconds (max 300000) |
 | `outputDir` | string | `.ralph-tui/iterations` | Directory for iteration log files |
 | `progressFile` | string | `.ralph-tui/progress.md` | Progress file for cross-iteration context |
+| `worktree` | boolean \| string | `false` | Run sessions in an isolated git worktree. `true` auto-names from session context; string sets explicit worktree name. |
 | `autoCommit` | boolean | `false` | Ensures a git commit after each successful task. When `true`, ralph-tui stages and commits all uncommitted changes after task completion. When `false`, no automatic commit is made by ralph-tui, though the agent may still commit on its own if instructed by templates or CLAUDE.md. |
 | `prompt_template` | string | - | Custom Handlebars template path |
 | `subagentTracingDetail` | string | `"off"` | Subagent visibility level |

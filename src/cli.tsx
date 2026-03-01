@@ -80,6 +80,7 @@ Run Options:
   --model <name>      Override model (e.g., opus, sonnet)
   --tracker <name>    Override tracker plugin (e.g., beads, beads-bv, json)
   --iterations <n>    Maximum iterations (0 = unlimited)
+  --worktree [name]   Run in an isolated git worktree (auto-merges on success)
   --resume            Resume existing session (deprecated, use 'resume' command)
   --headless          Run without TUI (alias: --no-tui)
   --no-tui            Run without TUI, output structured logs to stdout
@@ -119,6 +120,7 @@ Examples:
   ralph-tui run                          # Start execution with defaults
   ralph-tui run --epic myproject-epic    # Run with specific epic
   ralph-tui run --prd ./prd.json         # Run with PRD file
+  ralph-tui run --worktree               # Run in isolated session worktree
   ralph-tui resume                       # Resume interrupted session
   ralph-tui status                       # Check session status
   ralph-tui status --json                # JSON output for CI/scripts
