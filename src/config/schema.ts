@@ -224,6 +224,9 @@ export const StoredConfigSchema = z
 
     // Conflict resolution configuration for parallel execution
     conflictResolution: ConflictResolutionConfigSchema.optional(),
+
+    // Session worktree configuration
+    worktree: z.union([z.boolean(), z.string().min(1)]).optional(),
   })
   .strict();
 

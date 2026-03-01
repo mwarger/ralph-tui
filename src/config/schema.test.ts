@@ -419,6 +419,7 @@ describe('StoredConfigSchema', () => {
       skills_dir: './skills',
       subagentTracingDetail: 'moderate',
       notifications: { enabled: true, sound: 'ralph' },
+      worktree: true,
     });
     expect(result.defaultAgent).toBe('claude');
     expect(result.maxIterations).toBe(20);
@@ -536,6 +537,20 @@ describe('StoredConfigSchema', () => {
 
   test('validates parallel.mode values', () => {
     expect(() => StoredConfigSchema.parse({ parallel: { mode: 'invalid' } })).toThrow();
+  });
+
+  test('accepts worktree as boolean', () => {
+    const result = StoredConfigSchema.parse({
+      worktree: true,
+    });
+    expect(result.worktree).toBe(true);
+  });
+
+  test('accepts worktree as string name', () => {
+    const result = StoredConfigSchema.parse({
+      worktree: 'my-session-worktree',
+    });
+    expect(result.worktree).toBe('my-session-worktree');
   });
 });
 

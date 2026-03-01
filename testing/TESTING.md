@@ -221,6 +221,23 @@ cat testing/.test-workspace-path
 For automated testing in CI, you can run:
 
 ```bash
+# Full deterministic matrix (JSON + beads-rust, CLI + config, headless)
+bun run test:e2e:headless
+```
+
+This script uses:
+- `testing/e2e/mock-agent.sh` (no external model/API required)
+- throwaway git workspaces under `/tmp` (or `E2E_WORK_ROOT`)
+- headless `ralph-tui run` only
+
+Useful env vars:
+- `E2E_CASES=json-cli,json-config,beads-cli,beads-config` (default: all)
+- `KEEP_E2E_WORKSPACE=1` (keep workspace for debugging)
+- `E2E_WORK_ROOT=/custom/path` (override temp root)
+
+You can still run a simpler single-flow check manually:
+
+```bash
 # Setup
 ./testing/setup-test-workspace.sh
 

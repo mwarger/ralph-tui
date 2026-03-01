@@ -13,8 +13,8 @@ import type { RuntimeOptions, StoredConfig, SandboxConfig } from '../config/type
 import {
   checkSession,
   createSession,
-  resumeSession,
   endSession,
+  updateSessionStatus,
   hasPersistedSession,
   loadPersistedSession,
   savePersistedSession,
@@ -87,7 +87,7 @@ import { basename, dirname, join } from 'node:path';
 import { getEnvExclusionReport, formatEnvExclusionReport } from '../plugins/agents/base.js';
 import { writeFileAtomic } from '../session/atomic-write.js';
 import { formatDuration } from '../utils/logger.js';
-import { createSessionWorktree, copyTrackerData, deriveSessionName, mergeSessionWorktree, preserveIterationLogs, printWorktreePreservedMessage } from '../session-worktree.js';
+import { prepareSessionWorktree, copyTrackerData, deriveSessionName, mergeSessionWorktree, preserveIterationLogs, printWorktreePreservedMessage, resolveWorktreePrdPath } from '../session-worktree.js';
 import type { SessionWorktreeResult } from '../session-worktree.js';
 
 type PersistState = (state: PersistedSessionState) => void | Promise<void>;
@@ -2138,6 +2138,7 @@ async function runParallelWithTui(
   config: RalphConfig,
   initialTasks: TrackerTask[],
   directMerge: boolean,
+  summaryCwd: string,
   storedConfig?: StoredConfig,
 ): Promise<ParallelTuiRunResult> {
   let currentState = persistedState;
@@ -2244,7 +2245,7 @@ async function runParallelWithTui(
       parallelState.completionSummaryLines = formatParallelRunSummary(finalSummary).split('\n');
 
       try {
-        finalSummaryPath = await writeParallelRunSummary(config.cwd, finalSummary);
+        finalSummaryPath = await writeParallelRunSummary(summaryCwd, finalSummary);
         parallelState.completionSummaryPath = finalSummaryPath;
         finalSummaryWriteError = null;
         parallelState.completionSummaryWriteError = undefined;
@@ -3046,6 +3047,7 @@ export async function executeRunCommand(args: string[]): Promise<void> {
   // Parse arguments
   const options = parseRunArgs(args);
   const cwd = options.cwd ?? process.cwd();
+  const lifecycleCwd = cwd;
 
   // Detect markdown PRD files and show helpful guidance
   if (options.prdPath && /\.(?:md|markdown)$/i.test(options.prdPath)) {
@@ -3236,7 +3238,7 @@ export async function executeRunCommand(args: string[]): Promise<void> {
 
   // Detect and recover stale sessions EARLY (before any prompts)
   // This fixes the issue where killing the TUI mid-task leaves activeTaskIds populated
-  const staleRecovery = await detectAndRecoverStaleSession(config.cwd, checkLock);
+  const staleRecovery = await detectAndRecoverStaleSession(lifecycleCwd, checkLock);
   if (staleRecovery.wasStale) {
     console.log('');
     console.log('⚠️  Recovered stale session');
@@ -3248,27 +3250,31 @@ export async function executeRunCommand(args: string[]): Promise<void> {
   }
 
   // Check for existing persisted session file
-  const sessionCheck = await checkSession(config.cwd);
-  const hasPersistedSessionFile = await hasPersistedSession(config.cwd);
+  const sessionCheck = await checkSession(lifecycleCwd);
+  const hasPersistedSessionFile = await hasPersistedSession(lifecycleCwd);
 
   // Handle existing persisted session prompt first (before lock acquisition)
   if (hasPersistedSessionFile && !options.force && !options.resume) {
-    const choice = await promptResumeOrNew(config.cwd);
+    const choice = await promptResumeOrNew(lifecycleCwd);
     if (choice === 'abort') {
       process.exit(1);
     }
     // Delete old session file if starting fresh
     if (choice === 'new') {
-      await deletePersistedSession(config.cwd);
+      await deletePersistedSession(lifecycleCwd);
     }
   }
 
   // Generate session ID early for lock acquisition
   const { randomUUID } = await import('node:crypto');
   const newSessionId = randomUUID();
+  const lockSessionId =
+    options.resume && sessionCheck.session
+      ? sessionCheck.session.id
+      : newSessionId;
 
   // Acquire lock with proper error messages and stale lock handling
-  const lockResult = await acquireLockWithPrompt(config.cwd, newSessionId, {
+  const lockResult = await acquireLockWithPrompt(lifecycleCwd, lockSessionId, {
     force: options.force,
     nonInteractive: options.headless,
   });
@@ -3282,16 +3288,16 @@ export async function executeRunCommand(args: string[]): Promise<void> {
   }
 
   // Register cleanup handlers to release lock on exit/crash
-  const cleanupLockHandlers = registerLockCleanupHandlers(config.cwd);
+  const cleanupLockHandlers = registerLockCleanupHandlers(lifecycleCwd);
 
   // Handle resume or new session
   let session;
   if (options.resume && sessionCheck.hasSession) {
     console.log('Resuming previous session...');
-    session = await resumeSession(config.cwd);
+    session = await updateSessionStatus(lifecycleCwd, 'running');
     if (!session) {
       console.error('Failed to resume session');
-      await releaseLockNew(config.cwd);
+      await releaseLockNew(lifecycleCwd);
       cleanupLockHandlers();
       process.exit(1);
     }
@@ -3300,7 +3306,7 @@ export async function executeRunCommand(args: string[]): Promise<void> {
     // Note: Lock already acquired above, so createSession won't re-acquire
 
     // Clear progress file for fresh start with new epic
-    await clearProgress(config.cwd);
+    await clearProgress(lifecycleCwd);
 
     session = await createSession({
       sessionId: newSessionId,
@@ -3310,7 +3316,7 @@ export async function executeRunCommand(args: string[]): Promise<void> {
       prdPath: config.prdPath,
       maxIterations: config.maxIterations,
       totalTasks: 0, // Will be updated
-      cwd: config.cwd,
+      cwd: lifecycleCwd,
       lockAlreadyAcquired: true,
     });
   }
@@ -3331,25 +3337,80 @@ export async function executeRunCommand(args: string[]): Promise<void> {
     });
 
     try {
-      const result = await createSessionWorktree(cwd, sessionName);
+      const result = await prepareSessionWorktree(cwd, sessionName, {
+        resume: options.resume && sessionCheck.hasSession,
+      });
 
       sessionWorktreeInfo = result;
 
-      // Copy tracker data into the worktree before engine initialization
-      copyTrackerData(cwd, result.worktreePath, config.tracker.plugin, config.prdPath);
+      let copiedJsonPrdPath: string | undefined;
+      let copiedJsonPrdIsExternal = false;
+      if (result.mode === 'created') {
+        // Copy tracker data only for brand-new worktrees. Resume paths preserve
+        // existing worktree state and must not overwrite it from main cwd.
+        const copyResult = copyTrackerData(
+          cwd,
+          result.worktreePath,
+          config.tracker.plugin,
+          config.prdPath,
+        );
+        copiedJsonPrdPath = copyResult.jsonPrdPath;
+        copiedJsonPrdIsExternal = copyResult.jsonPrdIsExternal ?? false;
+      }
 
       // Redirect the execution engine to run inside the worktree
       config.cwd = result.worktreePath;
 
+      // Ensure tracker I/O points at the session worktree (not the original cwd).
+      if (
+        config.tracker.plugin === 'beads-rust' ||
+        config.tracker.plugin === 'beads' ||
+        config.tracker.plugin === 'beads-bv'
+      ) {
+        config.tracker.options = {
+          ...config.tracker.options,
+          workingDir: result.worktreePath,
+        };
+      }
+
+      if (config.tracker.plugin === 'json') {
+        const trackerPath =
+          typeof config.tracker.options.path === 'string'
+            ? config.tracker.options.path
+            : config.prdPath;
+
+        if (typeof trackerPath === 'string' && trackerPath.length > 0) {
+          const rebasedPrd = resolveWorktreePrdPath(
+            cwd,
+            result.worktreePath,
+            trackerPath
+          );
+          const targetPrd = copiedJsonPrdPath ?? rebasedPrd.targetPrd;
+          const rebasedExternalPrd = copiedJsonPrdIsExternal || rebasedPrd.isExternal;
+
+          config.tracker.options = {
+            ...config.tracker.options,
+            path: targetPrd,
+            prdPath: targetPrd,
+          };
+          config.prdPath = targetPrd;
+
+          if (rebasedExternalPrd) {
+            console.log(`JSON PRD rebased into worktree: ${targetPrd}`);
+          }
+        }
+      }
+
       console.log(`Worktree: ${result.worktreePath}`);
       console.log(`Branch: ${result.branchName}`);
+      console.log(`Worktree mode: ${result.mode}`);
     } catch (error) {
       console.error(
         'Failed to create session worktree:',
         error instanceof Error ? error.message : error
       );
-      await endSession(cwd, 'failed');
-      await releaseLockNew(cwd);
+      await endSession(lifecycleCwd, 'failed');
+      await releaseLockNew(lifecycleCwd);
       cleanupLockHandlers();
       process.exit(1);
     }
@@ -3399,8 +3460,8 @@ export async function executeRunCommand(args: string[]): Promise<void> {
       'Failed to initialize engine:',
       error instanceof Error ? error.message : error
     );
-    await endSession(config.cwd, 'failed');
-    await releaseLockNew(config.cwd);
+    await endSession(lifecycleCwd, 'failed');
+    await releaseLockNew(lifecycleCwd);
     cleanupLockHandlers();
     process.exit(1);
   }
@@ -3507,8 +3568,8 @@ export async function executeRunCommand(args: string[]): Promise<void> {
         'Failed to start remote listener:',
         error instanceof Error ? error.message : error
       );
-      await endSession(config.cwd, 'failed');
-      await releaseLockNew(config.cwd);
+      await endSession(lifecycleCwd, 'failed');
+      await releaseLockNew(lifecycleCwd);
       cleanupLockHandlers();
       process.exit(1);
     }
@@ -3524,7 +3585,7 @@ export async function executeRunCommand(args: string[]): Promise<void> {
     prdPath: config.prdPath,
     maxIterations: config.maxIterations,
     tasks,
-    cwd: config.cwd,
+    cwd: lifecycleCwd,
   });
 
   // Save initial state
@@ -3533,7 +3594,7 @@ export async function executeRunCommand(args: string[]): Promise<void> {
   // Register session in global registry for cross-directory resume
   await registerSession({
     sessionId: session.id,
-    cwd: config.cwd,
+    cwd: lifecycleCwd,
     status: 'running',
     startedAt: persistedState.startedAt,
     updatedAt: persistedState.updatedAt,
@@ -3712,7 +3773,13 @@ export async function executeRunCommand(args: string[]): Promise<void> {
       if (config.showTui) {
         // Parallel TUI mode — visualize workers, merges, and conflicts
         const parallelTuiResult = await runParallelWithTui(
-          parallelExecutor, persistedState, config, tasks, directMerge, storedConfig
+          parallelExecutor,
+          persistedState,
+          config,
+          tasks,
+          directMerge,
+          lifecycleCwd,
+          storedConfig
         );
         persistedState = parallelTuiResult.state;
         parallelSummaryForGuidance = parallelTuiResult.summary;
@@ -3950,7 +4017,7 @@ export async function executeRunCommand(args: string[]): Promise<void> {
       } else {
         try {
           const parallelSummaryPath = await writeParallelRunSummary(
-            config.cwd,
+            lifecycleCwd,
             parallelSummary
           );
           console.log(`Parallel summary saved to: ${parallelSummaryPath}`);
@@ -4000,8 +4067,8 @@ export async function executeRunCommand(args: string[]): Promise<void> {
       );
     }
 
-    await endSession(config.cwd, 'failed');
-    await releaseLockNew(config.cwd);
+    await endSession(lifecycleCwd, 'failed');
+    await releaseLockNew(lifecycleCwd);
     cleanupLockHandlers();
     process.exit(1);
   }
@@ -4019,13 +4086,14 @@ export async function executeRunCommand(args: string[]): Promise<void> {
     persistedState = completeSession(persistedState);
     await savePersistedSession(persistedState);
     // Delete session file on successful completion
-    await deletePersistedSession(config.cwd);
+    await deletePersistedSession(lifecycleCwd);
     // Remove from registry on completion
     await unregisterSession(session.id);
     console.log('\nSession completed successfully. Session file cleaned up.');
 
     // Auto-merge session worktree back to original branch on successful completion
     if (sessionWorktreeInfo) {
+      preserveIterationLogs(lifecycleCwd, sessionWorktreeInfo.worktreePath);
       const mergeResult = await mergeSessionWorktree(
         cwd,
         sessionWorktreeInfo.worktreePath,
@@ -4082,7 +4150,7 @@ export async function executeRunCommand(args: string[]): Promise<void> {
 
     try {
       const sequentialSummaryPath = await writeSequentialRunSummary(
-        config.cwd,
+        lifecycleCwd,
         sequentialSummary
       );
       console.log(`Sequential summary saved to: ${sequentialSummaryPath}`);
@@ -4098,8 +4166,8 @@ export async function executeRunCommand(args: string[]): Promise<void> {
   }
 
   // End session and clean up lock
-  await endSession(config.cwd, allComplete ? 'completed' : 'interrupted');
-  await releaseLockNew(config.cwd);
+  await endSession(lifecycleCwd, allComplete ? 'completed' : 'interrupted');
+  await releaseLockNew(lifecycleCwd);
   cleanupLockHandlers();
   console.log('\nRalph TUI finished.');
 

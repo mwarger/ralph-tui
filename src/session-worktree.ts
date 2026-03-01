@@ -6,6 +6,7 @@
  */
 
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { sanitizeBranchName } from './parallel/worktree-manager.js';
@@ -16,6 +17,15 @@ export interface SessionWorktreeResult {
   worktreePath: string;
   /** Branch name used for the worktree */
   branchName: string;
+}
+
+/** Session worktree creation/reuse mode */
+export type SessionWorktreeMode = 'created' | 'reused' | 'attached';
+
+/** Result of preparing a session worktree (create or reuse) */
+export interface PreparedSessionWorktreeResult extends SessionWorktreeResult {
+  /** Whether the worktree was created new, reused, or attached to an existing branch */
+  mode: SessionWorktreeMode;
 }
 
 /** Default minimum free disk space (500 MB) before creating a worktree */
@@ -64,6 +74,97 @@ function getWorktreeBaseDir(cwd: string): string {
   const parentDir = path.dirname(cwd);
   const projectName = path.basename(cwd);
   return path.join(parentDir, '.ralph-worktrees', projectName);
+}
+
+/**
+ * Check whether `candidate` is inside `baseDir`.
+ */
+function isPathInside(baseDir: string, candidate: string): boolean {
+  const rel = path.relative(baseDir, candidate);
+  return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
+}
+
+/**
+ * Parse `git worktree list --porcelain` output.
+ */
+function parseWorktreeList(output: string): Array<{ path: string; branch?: string }> {
+  const entries: Array<{ path: string; branch?: string }> = [];
+  let current: { path: string; branch?: string } | null = null;
+
+  for (const line of output.split('\n')) {
+    if (line.startsWith('worktree ')) {
+      if (current) {
+        entries.push(current);
+      }
+      current = { path: path.resolve(line.slice('worktree '.length).trim()) };
+      continue;
+    }
+
+    if (line.startsWith('branch ') && current) {
+      const ref = line.slice('branch '.length).trim();
+      current.branch = ref.startsWith('refs/heads/') ? ref.slice('refs/heads/'.length) : ref;
+    }
+  }
+
+  if (current) {
+    entries.push(current);
+  }
+
+  return entries;
+}
+
+/**
+ * Determine whether a local branch exists.
+ */
+function branchExists(cwd: string, branchName: string): boolean {
+  try {
+    git(cwd, ['show-ref', '--verify', '--quiet', `refs/heads/${branchName}`]);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Resolve a PRD path to a guaranteed in-worktree target path.
+ *
+ * - PRDs inside the main cwd preserve relative layout in worktree.
+ * - PRDs outside cwd are rebased into `.ralph-tui/external-prd/`.
+ */
+export function resolveWorktreePrdPath(
+  cwd: string,
+  worktreePath: string,
+  prdPath: string,
+): { sourcePrd: string; targetPrd: string; isExternal: boolean } {
+  const sourcePrd = path.resolve(cwd, prdPath);
+
+  // If already inside this worktree, keep as-is (resume path).
+  if (isPathInside(worktreePath, sourcePrd)) {
+    return { sourcePrd, targetPrd: sourcePrd, isExternal: false };
+  }
+
+  if (isPathInside(cwd, sourcePrd)) {
+    const relativePath = path.relative(cwd, sourcePrd);
+    const safeRelative = relativePath.length > 0 ? relativePath : path.basename(sourcePrd);
+    return {
+      sourcePrd,
+      targetPrd: path.join(worktreePath, safeRelative),
+      isExternal: false,
+    };
+  }
+
+  const ext = path.extname(sourcePrd) || '.json';
+  const rawBase = path.basename(sourcePrd, path.extname(sourcePrd));
+  const safeBase = rawBase.replace(/[^a-zA-Z0-9._-]/g, '-').replace(/-+/g, '-').slice(0, 64) || 'prd';
+  const sourceHash = createHash('sha1').update(sourcePrd).digest('hex').slice(0, 8);
+  const targetPrd = path.join(
+    worktreePath,
+    '.ralph-tui',
+    'external-prd',
+    `${safeBase}-${sourceHash}${ext}`,
+  );
+
+  return { sourcePrd, targetPrd, isExternal: true };
 }
 
 /**
@@ -177,30 +278,45 @@ export function copyTrackerData(
   worktreePath: string,
   trackerPlugin: string,
   prdPath?: string,
-): void {
+): { jsonPrdPath?: string; jsonPrdIsExternal?: boolean } {
   if (trackerPlugin === 'beads-rust') {
     // Sync DB to JSONL before copying
     if (!syncBeadsTracker(cwd, 'br')) {
       console.warn('Warning: br sync --flush-only failed; worktree will use existing .beads/ from HEAD');
     }
     copyBeadsDir(cwd, worktreePath);
+    return {};
   } else if (trackerPlugin === 'beads' || trackerPlugin === 'beads-bv') {
     // Sync DB to JSONL before copying
     if (!syncBeadsTracker(cwd, 'bd')) {
       console.warn('Warning: bd sync --flush-only failed; worktree will use existing .beads/ from HEAD');
     }
     copyBeadsDir(cwd, worktreePath);
+    return {};
   } else if (trackerPlugin === 'json') {
-    // Copy the PRD JSON file
+    // Copy the PRD JSON file to a guaranteed in-worktree path.
     const prdFile = prdPath || 'prd.json';
-    const sourcePrd = path.resolve(cwd, prdFile);
+    const { sourcePrd, targetPrd, isExternal } = resolveWorktreePrdPath(
+      cwd,
+      worktreePath,
+      prdFile,
+    );
+
     if (fs.existsSync(sourcePrd)) {
-      const targetPrd = path.join(worktreePath, path.relative(cwd, sourcePrd));
-      const targetPrdDir = path.dirname(targetPrd);
-      fs.mkdirSync(targetPrdDir, { recursive: true });
-      fs.copyFileSync(sourcePrd, targetPrd);
+      if (sourcePrd !== targetPrd) {
+        const targetPrdDir = path.dirname(targetPrd);
+        fs.mkdirSync(targetPrdDir, { recursive: true });
+        fs.copyFileSync(sourcePrd, targetPrd);
+      }
     }
+
+    return {
+      jsonPrdPath: targetPrd,
+      jsonPrdIsExternal: isExternal,
+    };
   }
+
+  return {};
 }
 
 /**
@@ -327,6 +443,78 @@ export async function createSessionWorktree(
   copyConfig(cwd, worktreePath);
 
   return { worktreePath, branchName };
+}
+
+/**
+ * Prepare a session worktree for execution.
+ *
+ * In resume mode:
+ * - reuse an already-attached worktree for the session branch when present
+ * - otherwise attach a new worktree to the existing session branch
+ *
+ * In non-resume mode:
+ * - create a fresh session worktree (destructive replacement behavior)
+ */
+export async function prepareSessionWorktree(
+  cwd: string,
+  sessionName: string,
+  options?: { resume?: boolean },
+): Promise<PreparedSessionWorktreeResult> {
+  const branchName = `ralph-session/${sessionName}`;
+  const baseDir = getWorktreeBaseDir(cwd);
+  const worktreePath = path.join(baseDir, sessionName);
+  const resume = options?.resume ?? false;
+
+  if (resume) {
+    let entries: Array<{ path: string; branch?: string }> = [];
+    try {
+      entries = parseWorktreeList(git(cwd, ['worktree', 'list', '--porcelain']));
+    } catch {
+      entries = [];
+    }
+
+    const attached = entries.find((entry) => entry.branch === branchName);
+    if (attached) {
+      return {
+        worktreePath: attached.path,
+        branchName,
+        mode: 'reused',
+      };
+    }
+
+    if (branchExists(cwd, branchName)) {
+      await checkDiskSpace(cwd);
+      fs.mkdirSync(baseDir, { recursive: true });
+
+      if (fs.existsSync(worktreePath)) {
+        try {
+          git(cwd, ['worktree', 'remove', '--force', worktreePath]);
+        } catch {
+          fs.rmSync(worktreePath, { recursive: true, force: true });
+          try {
+            git(cwd, ['worktree', 'prune']);
+          } catch {
+            // Best effort
+          }
+        }
+      }
+
+      git(cwd, ['worktree', 'add', worktreePath, branchName]);
+      copyConfig(cwd, worktreePath);
+
+      return {
+        worktreePath,
+        branchName,
+        mode: 'attached',
+      };
+    }
+  }
+
+  const created = await createSessionWorktree(cwd, sessionName);
+  return {
+    ...created,
+    mode: 'created',
+  };
 }
 
 /** Result of merging a session worktree back to the original branch */
